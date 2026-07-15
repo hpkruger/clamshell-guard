@@ -54,14 +54,14 @@ enum S {
 // closed == true  -> lid resting on the base: always-on is ACTIVE, the lid can
 //                    shut without the machine sleeping.
 // closed == false -> lid cracked open: normal power behaviour.
-func laptopIcon(closed: Bool) -> NSImage {
-    let img = NSImage(size: NSSize(width: 18, height: 18))
-    img.lockFocus()
+// Draws the glyph on an 18x18 grid into the current context, using whatever
+// stroke colour the caller set. Kept separate from laptopIcon so the same
+// geometry can be re-rendered at any scale (the website thumbnail does this)
+// without the two drifting apart.
+func drawLaptop(closed: Bool, lineWidth lw: CGFloat = 1.1) {
     let ctx = NSGraphicsContext.current!.cgContext
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
-    NSColor.black.setStroke()
-    let lw: CGFloat = 1.1
 
     if closed {
         let slab = NSBezierPath(roundedRect: NSRect(x: 1.8, y: 6.4, width: 14.4, height: 5.2),
@@ -87,7 +87,13 @@ func laptopIcon(closed: Bool) -> NSImage {
         lid.stroke()
         ctx.restoreGState()
     }
+}
 
+func laptopIcon(closed: Bool) -> NSImage {
+    let img = NSImage(size: NSSize(width: 18, height: 18))
+    img.lockFocus()
+    NSColor.black.setStroke()
+    drawLaptop(closed: closed)
     img.unlockFocus()
     img.isTemplate = true
     return img
