@@ -5,6 +5,49 @@ import Cocoa
 // Toggling asks for the admin password via the native macOS auth dialog,
 // so no passwordless-sudo entry or privileged helper is required.
 
+// MARK: - Localization
+
+// Read from the system language list rather than the bundle: this app ships as a
+// hand-assembled bundle with no .lproj resources, so Bundle.preferredLocalizations
+// would always report the development region.
+enum Lang { case en, zh, fr }
+
+let lang: Lang = {
+    guard let code = Locale.preferredLanguages.first else { return .en }
+    if code.hasPrefix("zh") { return .zh }
+    if code.hasPrefix("fr") { return .fr }
+    return .en
+}()
+
+func t(_ en: String, _ zh: String, _ fr: String) -> String {
+    switch lang {
+    case .en: return en
+    case .zh: return zh
+    case .fr: return fr
+    }
+}
+
+enum S {
+    static let title = t("Keep Awake", "保持在线常驻", "Rester éveillé")
+    static let subtitle = t("No sleep when lid closes",
+                            "合盖也不休眠",
+                            "Pas de veille écran fermé")
+    static let hint = t("Tip: left-click the icon to toggle",
+                        "提示：左键点图标可直接切换",
+                        "Astuce : clic gauche sur l'icône pour basculer")
+    static let quit = t("Quit", "退出", "Quitter")
+
+    static func tooltip(on: Bool) -> String {
+        on
+            ? t("Keep Awake: ON — lid close won't sleep (click to turn off)",
+                "常驻在线：开 — 合盖也不休眠（点击关闭）",
+                "Rester éveillé : ACTIVÉ — pas de veille écran fermé (cliquer pour désactiver)")
+            : t("Keep Awake: OFF — normal sleep (click to turn on)",
+                "常驻在线：关 — 正常休眠（点击开启）",
+                "Rester éveillé : DÉSACTIVÉ — veille normale (cliquer pour activer)")
+    }
+}
+
 // MARK: - Icons
 
 // A laptop seen edge-on: hinge at the back-right, front lip to the left.
@@ -54,20 +97,35 @@ func laptopIcon(closed: Bool) -> NSImage {
 
 final class SwitchRow: NSView {
     let toggle = NSSwitch()
-    let title = NSTextField(labelWithString: "保持在线常驻")
-    let subtitle = NSTextField(labelWithString: "合盖也不休眠")
+    let title = NSTextField(labelWithString: S.title)
+    let subtitle = NSTextField(labelWithString: S.subtitle)
 
     init(target: AnyObject, action: Selector) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 250, height: 48))
+        super.init(frame: .zero)
         title.font = .menuFont(ofSize: 13)
         subtitle.font = .menuFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
         toggle.target = target
         toggle.action = action
 
-        title.frame = NSRect(x: 14, y: 26, width: 170, height: 16)
-        subtitle.frame = NSRect(x: 14, y: 9, width: 170, height: 14)
-        toggle.frame = NSRect(x: 194, y: 14, width: 42, height: 22)
+        // Size the row to its own text so every language fits without clipping,
+        // instead of hard-coding a width that only suits one of them.
+        title.sizeToFit()
+        subtitle.sizeToFit()
+        let textWidth = max(title.frame.width, subtitle.frame.width)
+        let padding: CGFloat = 14
+        let gap: CGFloat = 24
+        let switchWidth: CGFloat = 42
+
+        frame = NSRect(x: 0, y: 0,
+                       width: padding + textWidth + gap + switchWidth + padding,
+                       height: 48)
+        title.frame = NSRect(x: padding, y: 25,
+                             width: textWidth, height: title.frame.height)
+        subtitle.frame = NSRect(x: padding, y: 9,
+                                width: textWidth, height: subtitle.frame.height)
+        toggle.frame = NSRect(x: padding + textWidth + gap, y: 13,
+                              width: switchWidth, height: 22)
 
         addSubview(title)
         addSubview(subtitle)
@@ -106,11 +164,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(rowItem)
 
         menu.addItem(.separator())
-        let hint = NSMenuItem(title: "提示：左键点图标可直接切换", action: nil, keyEquivalent: "")
+        let hint = NSMenuItem(title: S.hint, action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: S.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     // Left-click toggles; right-click (or control-click) opens the menu.
@@ -146,9 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let on = isOn()
         if let button = statusItem.button {
             button.image = on ? iconClosed : iconOpen
-            button.toolTip = on
-                ? "常驻在线：开 — 合盖也不休眠（点击关闭）"
-                : "常驻在线：关 — 正常休眠（点击开启）"
+            button.toolTip = S.tooltip(on: on)
         }
         switchRow.toggle.state = on ? .on : .off
     }
