@@ -1,0 +1,38 @@
+{
+  "description": "Notify AwakeToggle when local macOS Codex turns start and stop.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/AwakeToggle.app/Contents/MacOS/AwakeToggleHook\" start",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/AwakeToggle.app/Contents/MacOS/AwakeToggleHook\" stop",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/Applications/AwakeToggle.app/Contents/MacOS/AwakeToggleHook\" session-end",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

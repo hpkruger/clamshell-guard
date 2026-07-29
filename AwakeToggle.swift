@@ -1,8 +1,9 @@
 import Cocoa
+import Darwin
 import ServiceManagement
 
-// AwakeToggle — a menu-bar switch for `pmset -a disablesleep`.
-// Left-click the icon toggles instantly; right-click opens the menu.
+// AwakeToggle — a menu-bar controller for `pmset -a disablesleep`.
+// Click the icon to choose ON, AUTO (while Codex is working), or OFF.
 // This local build uses a narrowly scoped passwordless-sudo rule for pmset,
 // allowing the menu-bar toggle to work without an authorization dialog.
 
@@ -30,14 +31,15 @@ func t(_ en: String, _ zh: String, _ fr: String) -> String {
 
 enum S {
     static let title = t("Keep Awake", "保持在线常驻", "Rester éveillé")
-    static let subtitle = t("No sleep when lid closes",
-                            "合盖也不休眠",
-                            "Pas de veille écran fermé")
-    static let hint = t("Tip: left-click the icon to toggle",
-                        "提示：左键点图标可直接切换",
-                        "Astuce : clic gauche sur l'icône pour basculer")
+    static let subtitle = t("Choose when macOS may sleep",
+                            "选择何时允许 macOS 休眠",
+                            "Choisir quand macOS peut se mettre en veille")
+    static let hint = t("Click the menu-bar icon to change mode",
+                        "点击菜单栏图标以更改模式",
+                        "Cliquez sur l'icône pour changer de mode")
     static let quit = t("Quit", "退出", "Quitter")
     static let on = t("ON", "开启", "ACTIF")
+    static let auto = t("AUTO", "自动", "AUTO")
     static let off = t("OFF", "关闭", "INACTIF")
     static let approval = t("APPROVAL", "需批准", "APPROBATION")
     static let unavailable = t("UNAVAILABLE", "不可用", "INDISPONIBLE")
@@ -46,15 +48,90 @@ enum S {
                                   "登录后自动启动 AwakeToggle",
                                   "Démarrer AwakeToggle automatiquement")
 
-    static func tooltip(on: Bool) -> String {
-        on
-            ? t("Keep Awake: ON — lid close won't sleep (click to turn off)",
-                "常驻在线：开 — 合盖也不休眠（点击关闭）",
-                "Rester éveillé : ACTIVÉ — pas de veille écran fermé (cliquer pour désactiver)")
-            : t("Keep Awake: OFF — normal sleep (click to turn on)",
-                "常驻在线：关 — 正常休眠（点击开启）",
-                "Rester éveillé : DÉSACTIVÉ — veille normale (cliquer pour activer)")
+    static let alwaysAwake = t("Always preventing sleep",
+                               "始终阻止休眠",
+                               "Veille toujours désactivée")
+    static let normalSleep = t("Normal macOS sleep",
+                               "正常 macOS 休眠",
+                               "Veille macOS normale")
+    static let autoIdle = t("AUTO · No active Codex tasks",
+                            "自动 · 没有活动的 Codex 任务",
+                            "AUTO · Aucune tâche Codex active")
+
+    static func autoActive(_ count: Int) -> String {
+        t("AUTO · \(count) active Codex task\(count == 1 ? "" : "s")",
+          "自动 · \(count) 个活动的 Codex 任务",
+          "AUTO · \(count) tâche\(count == 1 ? "" : "s") Codex active\(count == 1 ? "" : "s")")
     }
+
+    static func tooltip(mode: AwakeMode, actualOn: Bool, activeCount: Int) -> String {
+        switch mode {
+        case .on:
+            return t("Keep Awake: ON — always preventing sleep",
+                     "常驻在线：开启 — 始终阻止休眠",
+                     "Rester éveillé : ACTIF — veille toujours désactivée")
+        case .auto:
+            return actualOn
+                ? autoActive(activeCount)
+                : autoIdle
+        case .off:
+            return t("Keep Awake: OFF — normal sleep",
+                     "常驻在线：关闭 — 正常休眠",
+                     "Rester éveillé : INACTIF — veille normale")
+        }
+    }
+}
+
+enum AwakeMode: String {
+    case on
+    case auto
+    case off
+
+    var segment: Int {
+        switch self {
+        case .on: return 0
+        case .auto: return 1
+        case .off: return 2
+        }
+    }
+
+    init?(segment: Int) {
+        switch segment {
+        case 0: self = .on
+        case 1: self = .auto
+        case 2: self = .off
+        default: return nil
+        }
+    }
+}
+
+struct TurnMarker: Codable {
+    let sessionID: String
+    let turnID: String
+    let appServerPID: Int32
+    let startedAt: Date
+}
+
+func activeTurnDirectory() -> URL {
+    FileManager.default.urls(for: .applicationSupportDirectory,
+                             in: .userDomainMask)[0]
+        .appendingPathComponent("AwakeToggle/active-turns", isDirectory: true)
+}
+
+func executablePath(of pid: pid_t) -> String? {
+    var buffer = [CChar](repeating: 0, count: 4096)
+    guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+    return String(cString: buffer)
+}
+
+func isCodexDesktopAppServer(_ pid: pid_t) -> Bool {
+    guard let path = executablePath(of: pid),
+          path.hasSuffix(".app/Contents/Resources/codex") else { return false }
+    let appURL = URL(fileURLWithPath: path)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    return Bundle(url: appURL)?.bundleIdentifier == "com.openai.codex"
 }
 
 // MARK: - Icons
@@ -109,6 +186,116 @@ func laptopIcon(closed: Bool) -> NSImage {
 }
 
 // MARK: - Switch row shown inside the menu
+
+final class ModeControl: NSSegmentedControl {
+    init() {
+        super.init(frame: .zero)
+        segmentCount = 3
+        trackingMode = .selectOne
+        setLabel(S.on, forSegment: 0)
+        setLabel(S.auto, forSegment: 1)
+        setLabel(S.off, forSegment: 2)
+        selectedSegment = AwakeMode.off.segment
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let outer = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let background = NSBezierPath(roundedRect: outer, xRadius: 6, yRadius: 6)
+        NSColor.quaternaryLabelColor.setFill()
+        background.fill()
+
+        let segmentWidth = outer.width / 3
+        let selected = NSRect(x: outer.minX + CGFloat(selectedSegment) * segmentWidth,
+                              y: outer.minY,
+                              width: segmentWidth,
+                              height: outer.height)
+        let selectedPath = NSBezierPath(roundedRect: selected.insetBy(dx: 1, dy: 1),
+                                        xRadius: 5,
+                                        yRadius: 5)
+        let selectedColor: NSColor
+        switch AwakeMode(segment: selectedSegment) {
+        case .on: selectedColor = .systemGreen
+        case .auto: selectedColor = .systemBlue
+        case .off, .none: selectedColor = .systemGray
+        }
+        selectedColor.setFill()
+        selectedPath.fill()
+
+        let font = NSFont.boldSystemFont(ofSize: 10)
+        for index in 0..<3 {
+            let label = label(forSegment: index) ?? ""
+            let color = index == selectedSegment ? NSColor.white : NSColor.labelColor
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: color
+            ]
+            let size = (label as NSString).size(withAttributes: attributes)
+            let x = outer.minX + CGFloat(index) * segmentWidth
+                + (segmentWidth - size.width) / 2
+            let y = outer.midY - size.height / 2
+            (label as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
+        }
+
+        NSColor.separatorColor.setStroke()
+        background.lineWidth = 1
+        background.stroke()
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+}
+
+final class ModeRow: NSView {
+    let modeControl = ModeControl()
+    let title = NSTextField(labelWithString: S.title)
+    let subtitle = NSTextField(labelWithString: S.subtitle)
+
+    init(target: AnyObject, action: Selector) {
+        super.init(frame: .zero)
+        title.font = .menuFont(ofSize: 13)
+        subtitle.font = .menuFont(ofSize: 11)
+        subtitle.textColor = .secondaryLabelColor
+        modeControl.target = target
+        modeControl.action = action
+
+        let textWidth: CGFloat = 235
+        let padding: CGFloat = 14
+        let gap: CGFloat = 20
+        let controlWidth: CGFloat = 174
+
+        frame = NSRect(x: 0, y: 0,
+                       width: padding + textWidth + gap + controlWidth + padding,
+                       height: 54)
+        title.frame = NSRect(x: padding, y: 29, width: textWidth, height: 16)
+        subtitle.frame = NSRect(x: padding, y: 10, width: textWidth, height: 15)
+        modeControl.frame = NSRect(x: padding + textWidth + gap, y: 15,
+                                   width: controlWidth, height: 25)
+
+        addSubview(title)
+        addSubview(subtitle)
+        addSubview(modeControl)
+    }
+
+    func update(mode: AwakeMode, activeCount: Int) {
+        modeControl.selectedSegment = mode.segment
+        modeControl.needsDisplay = true
+        switch mode {
+        case .on:
+            subtitle.stringValue = S.alwaysAwake
+            subtitle.textColor = .systemGreen
+        case .auto where activeCount > 0:
+            subtitle.stringValue = S.autoActive(activeCount)
+            subtitle.textColor = .systemGreen
+        case .auto:
+            subtitle.stringValue = S.autoIdle
+            subtitle.textColor = .secondaryLabelColor
+        case .off:
+            subtitle.stringValue = S.normalSleep
+            subtitle.textColor = .secondaryLabelColor
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+}
 
 // NSSwitch uses an inactive grey track when a menu-bar-only app is not the
 // foreground application. Draw the track explicitly so the ON state remains
@@ -223,34 +410,51 @@ final class SwitchRow: NSView {
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private let modeDefaultsKey = "AwakeMode"
+    private let idleGraceSeconds: TimeInterval = 10
+
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let iconClosed = laptopIcon(closed: true)
     let iconOpen = laptopIcon(closed: false)
     var menu: NSMenu!
-    var switchRow: SwitchRow!
+    var modeRow: ModeRow!
     var loginRow: SwitchRow!
+    var awakeMode = AwakeMode.off
+    var monitorTimer: Timer?
+    var lastActiveCount = 0
+    var idleGraceDeadline: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        awakeMode = loadAwakeMode()
         buildMenu()
         if let button = statusItem.button {
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
-        refresh()
+        monitorTimer = Timer.scheduledTimer(timeInterval: 2,
+                                            target: self,
+                                            selector: #selector(monitorTick),
+                                            userInfo: nil,
+                                            repeats: true)
+        RunLoop.main.add(monitorTimer!, forMode: .common)
+        evaluateMode()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if awakeMode == .auto {
+            setSleepDisabled(false)
+        }
     }
 
     func buildMenu() {
         menu = NSMenu()
         menu.delegate = self
 
-        switchRow = SwitchRow(title: S.title,
-                              subtitle: S.subtitle,
-                              target: self,
-                              action: #selector(switchFlipped))
-        let rowItem = NSMenuItem()
-        rowItem.view = switchRow
-        menu.addItem(rowItem)
+        modeRow = ModeRow(target: self, action: #selector(modeChanged))
+        let modeItem = NSMenuItem()
+        modeItem.view = modeRow
+        menu.addItem(modeItem)
 
         loginRow = SwitchRow(title: S.launchTitle,
                              subtitle: S.launchSubtitle,
@@ -266,24 +470,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hint.isEnabled = false
         menu.addItem(hint)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: S.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: S.quit,
+                                action: #selector(NSApplication.terminate(_:)),
+                                keyEquivalent: "q"))
     }
 
-    // Left-click toggles; right-click (or control-click) opens the menu.
+    // A three-state choice can't be represented by a single instant toggle, so
+    // either mouse button opens the mode menu.
     @objc func statusItemClicked() {
-        guard let event = NSApp.currentEvent else { return }
-        if event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
-            statusItem.menu = menu
-            statusItem.button?.performClick(nil)
-            statusItem.menu = nil      // release it so left-click keeps toggling
-        } else {
-            toggleAwake()
-        }
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
     }
 
-    @objc func switchFlipped() {
-        toggleAwake()
+    @objc func modeChanged() {
+        guard let selected = AwakeMode(segment: modeRow.modeControl.selectedSegment) else {
+            return
+        }
+        awakeMode = selected
+        UserDefaults.standard.set(selected.rawValue, forKey: modeDefaultsKey)
+        idleGraceDeadline = nil
+        evaluateMode()
         menu.cancelTracking()
+    }
+
+    @objc func monitorTick() {
+        evaluateMode()
     }
 
     @objc func loginFlipped() {
@@ -315,25 +527,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        switchRow.setOn(isOn())
-        refreshLoginItem()
+        evaluateMode()
+    }
+
+    func loadAwakeMode() -> AwakeMode {
+        if let raw = UserDefaults.standard.string(forKey: modeDefaultsKey),
+           let saved = AwakeMode(rawValue: raw) {
+            return saved
+        }
+        return isOn() ? .on : .off
+    }
+
+    func activeCodexTurnCount() -> Int {
+        let directory = activeTurnDirectory()
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return 0 }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var count = 0
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file),
+                  let marker = try? decoder.decode(TurnMarker.self, from: data),
+                  isCodexDesktopAppServer(marker.appServerPID) else {
+                try? fileManager.removeItem(at: file)
+                continue
+            }
+            count += 1
+        }
+        return count
+    }
+
+    func evaluateMode() {
+        let activeCount = activeCodexTurnCount()
+        let desiredOn: Bool
+
+        switch awakeMode {
+        case .on:
+            idleGraceDeadline = nil
+            desiredOn = true
+        case .off:
+            idleGraceDeadline = nil
+            desiredOn = false
+        case .auto:
+            if activeCount > 0 {
+                idleGraceDeadline = nil
+                desiredOn = true
+            } else {
+                if lastActiveCount > 0 {
+                    idleGraceDeadline = Date().addingTimeInterval(idleGraceSeconds)
+                }
+                if let deadline = idleGraceDeadline, deadline > Date() {
+                    desiredOn = true
+                } else {
+                    idleGraceDeadline = nil
+                    desiredOn = false
+                }
+            }
+        }
+
+        lastActiveCount = activeCount
+        setSleepDisabled(desiredOn)
+        refreshUI(activeCount: activeCount)
     }
 
     // Reading the current state needs no privileges.
     func isOn() -> Bool {
-        for line in shell("/usr/bin/pmset", ["-g"]).split(separator: "\n") where line.contains("SleepDisabled") {
+        for line in shell("/usr/bin/pmset", ["-g"]).split(separator: "\n")
+            where line.contains("SleepDisabled") {
             return line.contains("1")
         }
         return false
     }
 
-    func refresh() {
-        let on = isOn()
+    func setSleepDisabled(_ disabled: Bool) {
+        guard isOn() != disabled else { return }
+        _ = shell("/usr/bin/sudo",
+                  ["-n", "/usr/bin/pmset", "-a", "disablesleep", disabled ? "1" : "0"])
+    }
+
+    func refreshUI(activeCount: Int) {
+        let actualOn = isOn()
         if let button = statusItem.button {
-            button.image = on ? iconClosed : iconOpen
-            button.toolTip = S.tooltip(on: on)
+            button.image = actualOn ? iconClosed : iconOpen
+            button.toolTip = S.tooltip(mode: awakeMode,
+                                       actualOn: actualOn,
+                                       activeCount: activeCount)
         }
-        switchRow.setOn(on)
+        modeRow.update(mode: awakeMode, activeCount: activeCount)
         refreshLoginItem()
     }
 
@@ -355,12 +640,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         @unknown default:
             loginRow.setOn(false)
         }
-    }
-
-    func toggleAwake() {
-        let target = isOn() ? "0" : "1"
-        _ = shell("/usr/bin/sudo", ["-n", "/usr/bin/pmset", "-a", "disablesleep", target])
-        refresh()
     }
 
     func shell(_ launchPath: String, _ args: [String]) -> String {

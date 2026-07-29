@@ -15,10 +15,16 @@ for arch in arm64 x86_64; do
         -target "${arch}-apple-macos${DEPLOY_TARGET}" \
         -o "$BUILD/AwakeToggle-$arch" \
         AwakeToggle.swift
+    swiftc -O \
+        -target "${arch}-apple-macos${DEPLOY_TARGET}" \
+        -o "$BUILD/AwakeToggleHook-$arch" \
+        AwakeToggleHook.swift
 done
 
 lipo -create "$BUILD/AwakeToggle-arm64" "$BUILD/AwakeToggle-x86_64" \
      -output "$APP/Contents/MacOS/AwakeToggle"
+lipo -create "$BUILD/AwakeToggleHook-arm64" "$BUILD/AwakeToggleHook-x86_64" \
+     -output "$APP/Contents/MacOS/AwakeToggleHook"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
