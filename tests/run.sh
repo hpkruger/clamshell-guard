@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPOSITORY="$(cd "$(dirname "$0")/.." && pwd)"
-TEST_TEMP="$(mktemp -d /tmp/awaketoggle-test.XXXXXX)"
+TEST_TEMP="$(mktemp -d /tmp/clamshell-guard-test.XXXXXX)"
 ROUTER_PID=""
 
 cleanup() {

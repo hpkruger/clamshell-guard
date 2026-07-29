@@ -11,8 +11,13 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Take the app source minus its top-level bootstrap, then append the exporter.
 # Top-level statements are only legal in a file called main.swift.
-sed '/^let app = NSApplication.shared/,$d' AwakeToggle.swift > "$TMP/main.swift"
+sed '/^@main$/,$d' ClamshellGuard.swift > "$TMP/main.swift"
 cat tools/export-thumbnail.swift >> "$TMP/main.swift"
 
-swiftc -O -o "$TMP/export" "$TMP/main.swift"
+swiftc -O -lsqlite3 -framework IOKit \
+    -o "$TMP/export" \
+    "$TMP/main.swift" \
+    CodexIPCMonitor.swift \
+    SystemSleepAssertion.swift \
+    ClamshellDisplaySleepController.swift
 "$TMP/export" "$OUT" "$FONTS"

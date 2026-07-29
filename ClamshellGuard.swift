@@ -1,7 +1,7 @@
 import Cocoa
 import ServiceManagement
 
-// AwakeToggle — a menu-bar controller for `pmset -a disablesleep`.
+// Clamshell Guard — a menu-bar controller for `pmset -a disablesleep`.
 // Click the icon to choose ON, AUTO (while Codex is working), or OFF.
 // This local build uses a narrowly scoped passwordless-sudo rule for pmset,
 // allowing the menu-bar toggle to work without an authorization dialog.
@@ -344,6 +344,7 @@ final class LoginRow: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let modeDefaultsKey = "AwakeMode"
+    private let legacyDefaultsSuite = "com.machinefriendly.awaketoggle"
     private let idleGraceSeconds: TimeInterval = 10
 
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -465,7 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 try service.unregister()
             }
         } catch {
-            NSLog("AwakeToggle login item error: \(error)")
+            NSLog("Clamshell Guard login item error: \(error)")
         }
 
         refreshLoginItem()
@@ -482,6 +483,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func loadAwakeMode() -> AwakeMode {
         if let raw = UserDefaults.standard.string(forKey: modeDefaultsKey),
            let saved = AwakeMode(rawValue: raw) {
+            return saved
+        }
+        if let legacyDefaults = UserDefaults(suiteName: legacyDefaultsSuite),
+           let raw = legacyDefaults.string(forKey: modeDefaultsKey),
+           let saved = AwakeMode(rawValue: raw) {
+            UserDefaults.standard.set(saved.rawValue, forKey: modeDefaultsKey)
             return saved
         }
         return isOn() ? .on : .off
@@ -607,12 +614,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 @main
-struct AwakeToggleApplication {
+struct ClamshellGuardApplication {
     static func main() {
+        if handleLoginItemCommand() {
+            return
+        }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)   // menu-bar only, no Dock icon
         app.run()
+    }
+
+    /// Supports deterministic install and migration scripts without opening the
+    /// menu UI. Normal launches do not enter this path.
+    private static func handleLoginItemCommand() -> Bool {
+        let arguments = Set(CommandLine.arguments.dropFirst())
+        let register = arguments.contains("--register-login-item")
+        let unregister = arguments.contains("--unregister-login-item")
+        guard register || unregister else { return false }
+
+        guard #available(macOS 13.0, *) else {
+            fputs("Login items require macOS 13 or later\n", stderr)
+            exit(1)
+        }
+
+        do {
+            if register {
+                if SMAppService.mainApp.status == .notRegistered ||
+                    SMAppService.mainApp.status == .notFound {
+                    try SMAppService.mainApp.register()
+                }
+            } else if SMAppService.mainApp.status == .enabled ||
+                        SMAppService.mainApp.status == .requiresApproval {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            fputs("Clamshell Guard login item command failed: \(error)\n", stderr)
+            exit(1)
+        }
+
+        return true
     }
 }

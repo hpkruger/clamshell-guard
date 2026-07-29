@@ -42,7 +42,7 @@ final class ClamshellDisplaySleepController {
         }
 
         if !sleepDisplays() {
-            logger("AwakeToggle could not put connected displays to sleep")
+            logger("Clamshell Guard could not put connected displays to sleep")
         }
     }
 

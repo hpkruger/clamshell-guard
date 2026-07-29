@@ -4,7 +4,7 @@ Research date: 29 July 2026
 
 ## Purpose
 
-AwakeToggle's AUTO mode needs to know whether Codex Desktop has any active
+Clamshell Guard's AUTO mode needs to know whether Codex Desktop has any active
 tasks. The original implementation used Codex lifecycle hooks to increment and
 decrement a local marker count. That count can become stale when a hook is
 missed, a task is cancelled, Codex exits unexpectedly, or hook approval and
@@ -36,7 +36,7 @@ state snapshot and subsequently streams state patches. The snapshot contains:
 }
 ```
 
-This gives AwakeToggle the state Codex itself is using instead of requiring a
+This gives Clamshell Guard the state Codex itself is using instead of requiring a
 separate counter.
 
 The IPC interface is private and unsupported. It can change in a future Codex
@@ -52,7 +52,7 @@ socket:
 1. Each frame starts with a four-byte unsigned little-endian JSON payload
    length, followed by UTF-8 JSON.
 2. The maximum frame length in the inspected implementation is 256 MiB.
-   AwakeToggle deliberately imposes a lower 64 MiB limit and treats anything
+   Clamshell Guard deliberately imposes a lower 64 MiB limit and treats anything
    larger as incompatible rather than allocating up to the router maximum.
 3. A client initializes with a request shaped like:
 
@@ -64,7 +64,7 @@ socket:
      "version": 0,
      "method": "initialize",
      "params": {
-       "clientType": "awaketoggle"
+       "clientType": "clamshell-guard"
      }
    }
    ```
@@ -102,7 +102,7 @@ socket:
 
 At the time of inspection, `thread-stream-following-changed` was protocol
 version 1, `thread-stream-following-status-requested` was version 1, and
-`thread-stream-state-changed` was version 11. AwakeToggle only sends the first
+`thread-stream-state-changed` was version 11. Clamshell Guard only sends the first
 of these. It accepts incoming state messages by method and payload shape rather
 than rejecting a future incoming version number.
 
@@ -121,7 +121,7 @@ database supplies candidates:
 ```
 
 The `threads` table contains `id`, `updated_at`, and `archived`. It does not
-contain live runtime status. AwakeToggle therefore uses SQLite only for
+contain live runtime status. Clamshell Guard therefore uses SQLite only for
 discovery, then asks the IPC owner for authoritative status.
 
 The tested strategy is:
@@ -160,7 +160,7 @@ The repository's fake-router integration test additionally verifies:
   available;
 - an owner disconnect preserves the last active count but changes availability
   to unavailable;
-- `thread-stream-following-status-requested` causes AwakeToggle to reassert
+- `thread-stream-following-status-requested` causes Clamshell Guard to reassert
   `following: true`;
 - a fresh snapshot from the replacement owner restores availability; and
 - a subsequent active-to-idle patch is applied without treating a later idle
@@ -180,7 +180,7 @@ cover:
 - user cancellation;
 - force-quitting Codex;
 - Codex restart;
-- AwakeToggle restart;
+- Clamshell Guard restart;
 - concurrent tasks;
 - a Codex application update.
 
@@ -229,11 +229,11 @@ privacy-sensitive than consuming the runtime state already published on IPC.
 
 - The inspected router creates its IPC directory with mode `0700` and socket
   with mode `0600`.
-- AwakeToggle must verify that the directory and socket are owned by the current
+- Clamshell Guard must verify that the directory and socket are owned by the current
   user before connecting.
 - The socket has no additional application-level authentication; same-user
   filesystem access is its security boundary.
-- Snapshots may contain conversation history and other task data. AwakeToggle
+- Snapshots may contain conversation history and other task data. Clamshell Guard
   must extract only `threadRuntimeStatus`, must not persist the payload, and
   must never log raw messages.
 - The monitor is local-only and performs no network requests.

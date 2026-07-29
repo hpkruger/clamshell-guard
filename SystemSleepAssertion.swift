@@ -4,7 +4,7 @@ import IOKit.pwr_mgt
 /// A process-scoped IOKit assertion that prevents system sleep while active.
 ///
 /// Unlike the global `pmset disablesleep` setting, this assertion is
-/// automatically released by macOS if AwakeToggle exits or crashes.
+/// automatically released by macOS if Clamshell Guard exits or crashes.
 final class SystemSleepAssertion {
     typealias CreateAssertion = (
         _ reason: CFString,
@@ -23,7 +23,7 @@ final class SystemSleepAssertion {
     }
 
     init(
-        reason: String = "AwakeToggle is keeping the system awake",
+        reason: String = "Clamshell Guard is keeping the system awake",
         createAssertion: @escaping CreateAssertion = { reason, assertionID in
             IOPMAssertionCreateWithName(
                 kIOPMAssertionTypePreventSystemSleep as CFString,
@@ -60,7 +60,7 @@ final class SystemSleepAssertion {
             var newAssertionID = IOPMAssertionID(0)
             let result = createAssertion(reason, &newAssertionID)
             guard result == kIOReturnSuccess else {
-                logger("AwakeToggle could not create PreventSystemSleep assertion: \(result)")
+                logger("Clamshell Guard could not create PreventSystemSleep assertion: \(result)")
                 return false
             }
 
@@ -71,7 +71,7 @@ final class SystemSleepAssertion {
         guard let existingAssertionID = assertionID else { return true }
         let result = releaseAssertion(existingAssertionID)
         guard result == kIOReturnSuccess else {
-            logger("AwakeToggle could not release PreventSystemSleep assertion: \(result)")
+            logger("Clamshell Guard could not release PreventSystemSleep assertion: \(result)")
             return false
         }
 

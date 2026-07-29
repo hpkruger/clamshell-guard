@@ -25,7 +25,7 @@ final class CodexIPCMonitor {
     typealias UpdateHandler = (CodexActivityState) -> Void
 
     private let updateHandler: UpdateHandler
-    private let queue = DispatchQueue(label: "com.machinefriendly.awaketoggle.codex-ipc")
+    private let queue = DispatchQueue(label: "com.hpkruger.clamshellguard.codex-ipc")
     private let discoveryInterval: TimeInterval = 2
     private let candidateAgeSeconds: Int64 = 7 * 24 * 60 * 60
     private let maximumCandidateCount: Int32 = 250
@@ -176,7 +176,7 @@ final class CodexIPCMonitor {
             "sourceClientId": "initializing-client",
             "version": 0,
             "method": "initialize",
-            "params": ["clientType": "awaketoggle"]
+            "params": ["clientType": "clamshell-guard"]
         ]
         guard send(message) else {
             disconnect(nextAvailability: .unavailable)

@@ -1,4 +1,7 @@
 build/
+Clamshell Guard.app/
+ClamshellGuard.zip
+# Legacy build artifacts from before the rename.
 AwakeToggle.app/
 AwakeToggle.zip
 .DS_Store

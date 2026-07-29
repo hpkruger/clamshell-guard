@@ -1,15 +1,15 @@
-# AwakeToggle
+# Clamshell Guard
 
 A menu-bar controller that keeps your Mac awake **with the lid closed.**
 
 > [!IMPORTANT]
 > **This is a fork of
 > [`machinefriendly/awaketoggle`](https://github.com/machinefriendly/awaketoggle).**
-> MachineFriendly created the original app and its core `pmset disablesleep`
-> technique. This repository is an independently maintained extension and is
-> not an official MachineFriendly release.
+> MachineFriendly created the original AwakeToggle app and its core
+> `pmset disablesleep` technique. Clamshell Guard is an independently maintained
+> extension and is not an official MachineFriendly release.
 
-This fork provides three modes:
+Clamshell Guard provides three modes:
 
 - **ON** — always prevent sleep
 - **AUTO** — prevent sleep while the macOS Codex app is running one or more tasks
@@ -47,7 +47,7 @@ macOS 12+ · Intel and Apple silicon
 ## Installation
 
 AUTO mode needs the app in `/Applications` and a narrowly scoped sudoers rule
-for changing the sleep setting without repeated password prompts. AwakeToggle
+for changing the sleep setting without repeated password prompts. Clamshell Guard
 reads live task status directly from the local Codex Desktop app; no Codex hook
 configuration is required.
 
@@ -58,21 +58,21 @@ Install the Xcode Command Line Tools if needed, then run:
 ```bash
 xcode-select --install
 ./build.sh
-ditto AwakeToggle.app /Applications/AwakeToggle.app
-open /Applications/AwakeToggle.app
+ditto "Clamshell Guard.app" "/Applications/Clamshell Guard.app"
+open "/Applications/Clamshell Guard.app"
 ```
 
 `./build.sh` creates a universal Intel/Apple-silicon app and
-`AwakeToggle.zip`. You can drag the app into **Applications** instead of using
+`ClamshellGuard.zip`. You can drag the app into **Applications** instead of using
 `ditto`.
 
 If macOS blocks the first launch because this locally built app is not
 notarized, follow the [Opening an unnotarized build](#opening-an-unnotarized-build)
 steps below.
 
-### 2. Allow only AwakeToggle's two `pmset` changes without a password
+### 2. Allow only Clamshell Guard's two `pmset` changes without a password
 
-AwakeToggle runs these two commands:
+Clamshell Guard runs these two commands:
 
 ```bash
 /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 1
@@ -80,7 +80,7 @@ AwakeToggle runs these two commands:
 ```
 
 The `-n` flag means “never show a password prompt.” The command succeeds only
-when sudoers already permits it; otherwise AwakeToggle leaves the setting
+when sudoers already permits it; otherwise Clamshell Guard leaves the setting
 unchanged.
 
 First find your short macOS username:
@@ -92,7 +92,7 @@ id -un
 Open a dedicated sudoers file with the syntax-checking editor:
 
 ```bash
-sudo visudo -f /etc/sudoers.d/awaketoggle-pmset
+sudo visudo -f /etc/sudoers.d/clamshell-guard-pmset
 ```
 
 Add this as one line, replacing `yourusername` with the output from `id -un`:
@@ -104,7 +104,7 @@ yourusername ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pms
 Save and exit, then validate the file:
 
 ```bash
-sudo visudo -cf /etc/sudoers.d/awaketoggle-pmset
+sudo visudo -cf /etc/sudoers.d/clamshell-guard-pmset
 ```
 
 It should report `parsed OK`. Confirm that the OFF operation works without a
@@ -119,18 +119,23 @@ If the second command asks for a password or prints `a password is required`,
 do not broaden the rule: reopen the file with `visudo` and check the username,
 absolute path, and arguments.
 
+> Upgrading from AwakeToggle? An existing
+> `/etc/sudoers.d/awaketoggle-pmset` file remains valid because sudo matches the
+> permitted command and arguments, not the app name. Renaming that file is
+> optional.
+>
 > Earlier local installations used
 > `yourusername ALL=(root) NOPASSWD: /usr/bin/pmset`. That works, and still does
 > not disable authentication for other programs, but it permits every `pmset`
 > option. The two-command rule above is safer because it matches only the exact
-> ON and OFF operations used by AwakeToggle.
+> ON and OFF operations used by Clamshell Guard.
 
 ### 3. Test AUTO
 
-1. Start AwakeToggle and select **AUTO**.
+1. Start Clamshell Guard and select **AUTO**.
 2. Start a new task in the macOS Codex app.
-3. AwakeToggle should show `AUTO · 1 active Codex task`.
-4. When the task finishes, AwakeToggle waits 10 seconds and returns to
+3. Clamshell Guard should show `AUTO · 1 active Codex task`.
+4. When the task finishes, Clamshell Guard waits 10 seconds and returns to
    `AUTO · No active Codex tasks`.
 
 You can inspect the underlying state at any time:
@@ -140,14 +145,14 @@ You can inspect the underlying state at any time:
 ```
 
 `SleepDisabled 1` means keep-awake is active; `0` means macOS may sleep
-normally. Tasks already running when AwakeToggle starts are detected from
+normally. Tasks already running when Clamshell Guard starts are detected from
 Codex's current state.
 
 ### 4. Optional: launch at login
 
-Open the AwakeToggle menu and enable **Launch on Login**. This uses
+Open the Clamshell Guard menu and enable **Launch on Login**. This uses
 `SMAppService`, macOS's native login-item API. If macOS reports that approval is
-required, approve AwakeToggle under **System Settings → General → Login
+required, approve Clamshell Guard under **System Settings → General → Login
 Items**.
 
 ---
@@ -157,13 +162,13 @@ Items**.
 - **Click the icon** — open the mode menu
 - **Closed-laptop icon** = stay-awake is on
 - **Open-laptop icon** = normal sleep
-- **Launch on Login** — start AwakeToggle automatically after signing in
+- **Launch on Login** — start Clamshell Guard automatically after signing in
 
 The UI follows your system language: **English, 中文, or Français** (anything else falls back to English).
 
 This installation uses a narrowly scoped sudoers rule so only the two exact
 `/usr/bin/pmset -a disablesleep` changes can run without another password
-prompt. AwakeToggle uses absolute paths and never receives or stores your
+prompt. Clamshell Guard uses absolute paths and never receives or stores your
 password.
 
 It doesn't phone home or collect data. Launch at login is optional and uses
@@ -185,11 +190,11 @@ counter, so cancellation and missed lifecycle events cannot leave stale marker
 files.
 
 This IPC interface is private to Codex Desktop and may change in a future Codex
-release. If AwakeToggle cannot validate the socket, open the state database, or
+release. If Clamshell Guard cannot validate the socket, open the state database, or
 understand the IPC response, it shows `AUTO · Codex status unavailable` rather
 than claiming there are no active tasks. It reconnects automatically.
 
-Codex snapshots can contain more than runtime status. AwakeToggle extracts only
+Codex snapshots can contain more than runtime status. Clamshell Guard extracts only
 `threadRuntimeStatus`, does not log or retain snapshot contents, and makes no
 network requests. The complete protocol investigation, validation evidence,
 and compatibility notes are recorded in
@@ -208,7 +213,7 @@ yourself.**
 
 ### Don't trust me — read it
 
-- The menu-bar app is in [`AwakeToggle.swift`](AwakeToggle.swift), and its
+- The menu-bar app is in [`ClamshellGuard.swift`](ClamshellGuard.swift), and its
   Codex status monitor is in [`CodexIPCMonitor.swift`](CodexIPCMonitor.swift).
 - The only privileged thing it does is `pmset -a disablesleep 0/1` — Apple's own power-management command.
 - **No network access or data collection.**
@@ -220,9 +225,9 @@ security evidence here.
 
 ### Opening an unnotarized build
 
-1. Unzip and drag `AwakeToggle.app` into **Applications**
+1. Unzip and drag `Clamshell Guard.app` into **Applications**
 2. Double-click → blocked → click **Done** (⚠️ **not** "Move to Trash")
-3. Open **System Settings → Privacy & Security**, scroll down to "AwakeToggle was blocked"
+3. Open **System Settings → Privacy & Security**, scroll down to "Clamshell Guard was blocked"
 4. Click **Open Anyway** → confirm once more
 5. Done. It won't ask again.
 
@@ -236,8 +241,8 @@ Only the Xcode command line tools, no full Xcode install:
 
 ```bash
 xcode-select --install     # if you haven't already
-git clone https://github.com/hkrugercmc/awaketoggle.git
-cd awaketoggle
+git clone https://github.com/hpkruger/clamshell-guard.git
+cd clamshell-guard
 ./build.sh
 ```
 
@@ -259,14 +264,14 @@ Turning keep-awake off uses the same command with `0`.
 
 `caffeinate` can't do this: it creates a *power assertion*, which holds off **idle** sleep. A lid close is an explicit sleep request, and no assertion overrides it. That's why `pmset` needs `sudo` and `caffeinate` doesn't.
 
-While ON, or while AUTO has an active Codex task, AwakeToggle also holds a
+While ON, or while AUTO has an active Codex task, Clamshell Guard also holds a
 process-scoped IOKit `PreventSystemSleep` assertion. This complements the global
 lid-close setting by preventing ordinary system sleep. macOS releases the
-assertion automatically if AwakeToggle exits or crashes; AwakeToggle also
+assertion automatically if Clamshell Guard exits or crashes; Clamshell Guard also
 releases it explicitly when keep-awake turns off.
 
 When the lid changes from open to closed while keep-awake protection is active,
-AwakeToggle also runs:
+Clamshell Guard also runs:
 
 ```bash
 /usr/bin/pmset displaysleepnow
@@ -283,7 +288,7 @@ remains closed does not repeatedly blank displays.
 
 ## Uninstalling or reverting the configuration
 
-1. Select **OFF** and disable **Launch on Login** in AwakeToggle.
+1. Select **OFF** and disable **Launch on Login** in Clamshell Guard.
 2. Confirm normal sleep is restored:
 
    ```bash
@@ -293,11 +298,13 @@ remains closed does not repeatedly blank displays.
 3. Remove the dedicated sudoers file:
 
    ```bash
-   sudo rm /etc/sudoers.d/awaketoggle-pmset
+   sudo rm /etc/sudoers.d/clamshell-guard-pmset
    ```
 
-   If you used a differently named file, remove only that exact file.
-4. Quit AwakeToggle and move `/Applications/AwakeToggle.app` to the Trash.
+   Legacy AwakeToggle installations may instead use
+   `/etc/sudoers.d/awaketoggle-pmset`. Remove only the file you actually
+   installed.
+4. Quit Clamshell Guard and move `/Applications/Clamshell Guard.app` to the Trash.
 
 Restoring `disablesleep 0` before deleting the app matters because the macOS
 power setting can outlive the process that changed it.
@@ -307,7 +314,7 @@ power setting can outlive the process that changed it.
 ## Requests
 
 If you want more — scheduled windows or auto-off below a battery threshold —
-**[open an issue](https://github.com/hkrugercmc/awaketoggle/issues/new)** in this
+**[open an issue](https://github.com/hpkruger/clamshell-guard/issues/new)** in this
 fork. For the original minimal app, use the
 [upstream repository](https://github.com/machinefriendly/awaketoggle).
 
@@ -331,7 +338,7 @@ fork. For the original minimal app, use the
 本分支没有 Apple 开发者签名或经过 Apple 公证。因此不要只相信维护者的说明，请检查源码并自行编译:
 
 - **全部源码就在这里**：菜单栏 App 为
-  [`AwakeToggle.swift`](AwakeToggle.swift)，Codex 状态监控程序为
+  [`ClamshellGuard.swift`](ClamshellGuard.swift)，Codex 状态监控程序为
   [`CodexIPCMonitor.swift`](CodexIPCMonitor.swift)
 - 唯一需要权限的操作就是 `pmset -a disablesleep`(macOS 自带命令)
 - **不联网 · 不收集数据**；登录时启动为可选设置
@@ -339,7 +346,7 @@ fork. For the original minimal app, use the
 
 ### 怎么打开
 
-1. 解压,把 `AwakeToggle.app` 拖进「应用程序」
+1. 解压,把 `Clamshell Guard.app` 拖进「应用程序」
 2. 双击 → 被拦下 → 点 **「完成」**(⚠️ 不要点「移到废纸篓」)
 3. **系统设置 → 隐私与安全性** → 往下滚 → 点 **「仍要打开」** → 再确认一次
 4. 搞定,以后不会再问
@@ -348,7 +355,7 @@ macOS 15 以后,右键→打开的老办法已经被 Apple 取消了,只能走�
 
 > **⚠️ 注意散热和电量:** 开启后要手动关掉才恢复,重启也不会重置。合盖不休眠意味着机器在包里继续跑,热量散不出去,电量也会耗光。菜单栏图标就是为了让你随时看见它开着。
 
-有需求欢迎在**[本分支提交 Issue](https://github.com/hkrugercmc/awaketoggle/issues/new)**。
+有需求欢迎在**[本分支提交 Issue](https://github.com/hpkruger/clamshell-guard/issues/new)**。
 原始精简版本的问题请前往
 [`machinefriendly/awaketoggle`](https://github.com/machinefriendly/awaketoggle)。
 
@@ -361,4 +368,4 @@ MIT — do whatever you want. See [LICENSE](LICENSE).
 Original AwakeToggle created by
 [MachineFriendly](https://github.com/machinefriendly/awaketoggle). Fork-specific
 changes are maintained in
-[`hkrugercmc/awaketoggle`](https://github.com/hkrugercmc/awaketoggle).
+[`hpkruger/clamshell-guard`](https://github.com/hpkruger/clamshell-guard).

@@ -2,7 +2,7 @@ import Cocoa
 
 // Renders the blog/README thumbnail: the two real menu-bar states side by side.
 //
-// This file is concatenated onto AwakeToggle.swift (minus its app bootstrap) by
+// This file is concatenated onto ClamshellGuard.swift (minus its app bootstrap) by
 // tools/export-thumbnail.sh, so drawLaptop() below is literally the shipping
 // glyph code — the thumbnail cannot drift from what users see in the menu bar.
 //
@@ -96,7 +96,7 @@ text("ON", monoFont, purple, centeredAt: rightX, y: H * 0.225)
 text("Normal sleep", bodyFont, gray500, centeredAt: leftX, y: H * 0.15)
 text("Lid closed, still awake", bodyFont, gray900, centeredAt: rightX, y: H * 0.15)
 
-text("AwakeToggle", display, gray900, centeredAt: W / 2, y: H * 0.775)
+text("Clamshell Guard", display, gray900, centeredAt: W / 2, y: H * 0.775)
 
 NSGraphicsContext.restoreGraphicsState()
 
