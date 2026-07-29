@@ -2,11 +2,39 @@
 
 A menu-bar controller that keeps your Mac awake **with the lid closed.**
 
-This local fork provides three modes:
+> [!IMPORTANT]
+> **This is a fork of
+> [`machinefriendly/awaketoggle`](https://github.com/machinefriendly/awaketoggle).**
+> MachineFriendly created the original app and its core `pmset disablesleep`
+> technique. This repository is an independently maintained extension and is
+> not an official MachineFriendly release.
+
+This fork provides three modes:
 
 - **ON** — always prevent sleep
 - **AUTO** — prevent sleep while the macOS Codex app is running one or more tasks
 - **OFF** — use normal macOS sleep behaviour
+
+## What this fork adds
+
+The [original AwakeToggle](https://github.com/machinefriendly/awaketoggle) is a
+deliberately minimal manual on/off switch. This fork retains that core behaviour
+and adds:
+
+| Area | Original project | This fork |
+| --- | --- | --- |
+| Controls | Single manual on/off toggle | **ON / AUTO / OFF** mode selector |
+| Codex integration | None | **AUTO** follows live Codex Desktop task state, including concurrent tasks |
+| Monitor resilience | Not applicable | Reconnects after Codex restarts or socket-owner changes and reports unavailable state safely |
+| Sleep protection | `pmset disablesleep` | `pmset disablesleep` plus a process-scoped IOKit `PreventSystemSleep` assertion |
+| Lid-close display handling | No explicit display command | Runs `pmset displaysleepnow` once per lid-close transition |
+| Launch at login | Not included | Optional native login item using `SMAppService` |
+| Authorization | macOS administrator prompt when toggled | Non-interactive `sudo -n` with a sudoers rule restricted to the exact on/off commands |
+| Verification | Minimal upstream source | Unit/integration tests and documented [Codex IPC research](docs/CODEX_IPC_RESEARCH.md) |
+
+AUTO mode waits 10 seconds after the final Codex task finishes before restoring
+normal sleep. If Codex status cannot be read reliably, it reports that status as
+unavailable instead of treating the failure as zero active tasks.
 
 <!-- TODO: menu-bar screenshot -->
 
@@ -173,10 +201,10 @@ and compatibility notes are recorded in
 
 **This is not a malware detection.** macOS shows this for *any* app that hasn't been through Apple's **notarization**, regardless of whether it's safe. Notarization requires an Apple Developer account at **$99/year**.
 
-I didn't buy one. AwakeToggle is a small tool I wrote for myself and gave away
-— a yearly subscription to hand it out for free doesn't add up. The warning is
-the honest cost of that, so treat it like any unsigned binary from a stranger:
-**don't take my word for it.**
+This fork is not Developer ID signed or notarized. Treat it like any
+unnotarized binary:
+**don't take the maintainer's word for it—review the source and build it
+yourself.**
 
 ### Don't trust me — read it
 
@@ -208,7 +236,7 @@ Only the Xcode command line tools, no full Xcode install:
 
 ```bash
 xcode-select --install     # if you haven't already
-git clone https://github.com/machinefriendly/awaketoggle.git
+git clone https://github.com/hkrugercmc/awaketoggle.git
 cd awaketoggle
 ./build.sh
 ```
@@ -279,10 +307,9 @@ power setting can outlive the process that changed it.
 ## Requests
 
 If you want more — scheduled windows or auto-off below a battery threshold —
-**[open an issue](https://github.com/machinefriendly/awaketoggle/issues/new)**.
-I'd rather hear a real use case than guess.
-
-If enough people use it, I'll reconsider the developer certificate so the warning goes away.
+**[open an issue](https://github.com/hkrugercmc/awaketoggle/issues/new)** in this
+fork. For the original minimal app, use the
+[upstream repository](https://github.com/machinefriendly/awaketoggle).
 
 ---
 
@@ -292,11 +319,16 @@ If enough people use it, I'll reconsider the developer certificate so the warnin
 三种模式；自动模式会在 macOS Codex App 有任务运行时阻止休眠。界面跟随系统语言
 （中文 / English / Français）。
 
+> **分支说明：** 本仓库基于
+> [`machinefriendly/awaketoggle`](https://github.com/machinefriendly/awaketoggle)。
+> MachineFriendly 创建了原始版本；本分支增加了 Codex 自动模式、登录时启动、
+> 额外的休眠保护，以及合盖时关闭显示器等功能，并非 MachineFriendly 的官方版本。
+
 ### 为什么会看到「Apple 无法验证此 App 不含恶意软件」
 
 **这不是说 App 有病毒。** macOS 对任何没经过 Apple「公证」的软件都会弹这个,不管它安不安全。公证需要 Apple 开发者账号,**每年 99 美元**。
 
-我没买。这是我写给自己用的小工具,免费送出来,没理由每年为它掏 99 美元。所以这个警告是正常的 —— 但也别光信我:
+本分支没有 Apple 开发者签名或经过 Apple 公证。因此不要只相信维护者的说明，请检查源码并自行编译:
 
 - **全部源码就在这里**：菜单栏 App 为
   [`AwakeToggle.swift`](AwakeToggle.swift)，Codex 状态监控程序为
@@ -316,7 +348,9 @@ macOS 15 以后,右键→打开的老办法已经被 Apple 取消了,只能走�
 
 > **⚠️ 注意散热和电量:** 开启后要手动关掉才恢复,重启也不会重置。合盖不休眠意味着机器在包里继续跑,热量散不出去,电量也会耗光。菜单栏图标就是为了让你随时看见它开着。
 
-有需求欢迎 **[提 Issue](https://github.com/machinefriendly/awaketoggle/issues/new)**。用的人多了,我会考虑买开发者证书做公证,到时候警告就没有了。
+有需求欢迎在**[本分支提交 Issue](https://github.com/hkrugercmc/awaketoggle/issues/new)**。
+原始精简版本的问题请前往
+[`machinefriendly/awaketoggle`](https://github.com/machinefriendly/awaketoggle)。
 
 ---
 
@@ -324,4 +358,7 @@ macOS 15 以后,右键→打开的老办法已经被 Apple 取消了,只能走�
 
 MIT — do whatever you want. See [LICENSE](LICENSE).
 
-Made by [MachineFriendly](https://machinefriendly.com)
+Original AwakeToggle created by
+[MachineFriendly](https://github.com/machinefriendly/awaketoggle). Fork-specific
+changes are maintained in
+[`hkrugercmc/awaketoggle`](https://github.com/hkrugercmc/awaketoggle).
