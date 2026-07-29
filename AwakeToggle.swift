@@ -1,9 +1,10 @@
 import Cocoa
+import ServiceManagement
 
 // AwakeToggle — a menu-bar switch for `pmset -a disablesleep`.
 // Left-click the icon toggles instantly; right-click opens the menu.
-// Toggling asks for the admin password via the native macOS auth dialog,
-// so no passwordless-sudo entry or privileged helper is required.
+// This local build uses a narrowly scoped passwordless-sudo rule for pmset,
+// allowing the menu-bar toggle to work without an authorization dialog.
 
 // MARK: - Localization
 
@@ -36,6 +37,14 @@ enum S {
                         "提示：左键点图标可直接切换",
                         "Astuce : clic gauche sur l'icône pour basculer")
     static let quit = t("Quit", "退出", "Quitter")
+    static let on = t("ON", "开启", "ACTIF")
+    static let off = t("OFF", "关闭", "INACTIF")
+    static let approval = t("APPROVAL", "需批准", "APPROBATION")
+    static let unavailable = t("UNAVAILABLE", "不可用", "INDISPONIBLE")
+    static let launchTitle = t("Launch on Login", "登录时启动", "Ouvrir à la connexion")
+    static let launchSubtitle = t("Start AwakeToggle automatically",
+                                  "登录后自动启动 AwakeToggle",
+                                  "Démarrer AwakeToggle automatiquement")
 
     static func tooltip(on: Bool) -> String {
         on
@@ -101,16 +110,64 @@ func laptopIcon(closed: Bool) -> NSImage {
 
 // MARK: - Switch row shown inside the menu
 
-final class SwitchRow: NSView {
-    let toggle = NSSwitch()
-    let title = NSTextField(labelWithString: S.title)
-    let subtitle = NSTextField(labelWithString: S.subtitle)
+// NSSwitch uses an inactive grey track when a menu-bar-only app is not the
+// foreground application. Draw the track explicitly so the ON state remains
+// unmistakable even while another app is active.
+final class AwakeSwitch: NSSwitch {
+    var onColor = NSColor.systemGreen {
+        didSet { needsDisplay = true }
+    }
 
-    init(target: AnyObject, action: Selector) {
+    override func draw(_ dirtyRect: NSRect) {
+        let trackRect = bounds.insetBy(dx: 1, dy: 1)
+        let track = NSBezierPath(roundedRect: trackRect,
+                                 xRadius: trackRect.height / 2,
+                                 yRadius: trackRect.height / 2)
+        (state == .on ? onColor : NSColor.tertiaryLabelColor).setFill()
+        track.fill()
+
+        let inset: CGFloat = 2
+        let knobSize = trackRect.height - inset * 2
+        let knobX = state == .on
+            ? trackRect.maxX - inset - knobSize
+            : trackRect.minX + inset
+        let knobRect = NSRect(x: knobX,
+                              y: trackRect.minY + inset,
+                              width: knobSize,
+                              height: knobSize)
+
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+        shadow.shadowBlurRadius = 1.5
+        shadow.shadowOffset = NSSize(width: 0, height: -0.5)
+        shadow.set()
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: knobRect).fill()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
+final class SwitchRow: NSView {
+    let toggle = AwakeSwitch()
+    let title: NSTextField
+    let subtitle: NSTextField
+    let stateLabel = NSTextField(labelWithString: S.off)
+
+    init(title titleText: String,
+         subtitle subtitleText: String,
+         extraStateLabels: [String] = [],
+         target: AnyObject,
+         action: Selector) {
+        title = NSTextField(labelWithString: titleText)
+        subtitle = NSTextField(labelWithString: subtitleText)
         super.init(frame: .zero)
         title.font = .menuFont(ofSize: 13)
         subtitle.font = .menuFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
+        let stateFont = NSFont.boldSystemFont(ofSize: 11)
+        stateLabel.font = stateFont
+        stateLabel.alignment = .right
         toggle.target = target
         toggle.action = action
 
@@ -119,23 +176,45 @@ final class SwitchRow: NSView {
         title.sizeToFit()
         subtitle.sizeToFit()
         let textWidth = max(title.frame.width, subtitle.frame.width)
+        let stateWidth = ([S.on, S.off] + extraStateLabels)
+            .map { ($0 as NSString).size(withAttributes: [.font: stateFont]).width }
+            .max() ?? 0
         let padding: CGFloat = 14
         let gap: CGFloat = 24
+        let stateGap: CGFloat = 9
         let switchWidth: CGFloat = 42
 
         frame = NSRect(x: 0, y: 0,
-                       width: padding + textWidth + gap + switchWidth + padding,
+                       width: padding + textWidth + gap + stateWidth + stateGap
+                            + switchWidth + padding,
                        height: 48)
         title.frame = NSRect(x: padding, y: 25,
                              width: textWidth, height: title.frame.height)
         subtitle.frame = NSRect(x: padding, y: 9,
                                 width: textWidth, height: subtitle.frame.height)
-        toggle.frame = NSRect(x: padding + textWidth + gap, y: 13,
+        stateLabel.frame = NSRect(x: padding + textWidth + gap, y: 17,
+                                  width: stateWidth, height: 14)
+        toggle.frame = NSRect(x: stateLabel.frame.maxX + stateGap, y: 13,
                               width: switchWidth, height: 22)
 
         addSubview(title)
         addSubview(subtitle)
+        addSubview(stateLabel)
         addSubview(toggle)
+    }
+
+    func setOn(_ on: Bool) {
+        setState(on: on,
+                 label: on ? S.on : S.off,
+                 color: on ? .systemGreen : .secondaryLabelColor)
+    }
+
+    func setState(on: Bool, label: String, color: NSColor) {
+        toggle.onColor = color
+        toggle.state = on ? .on : .off
+        toggle.needsDisplay = true
+        stateLabel.stringValue = label
+        stateLabel.textColor = color
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -149,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let iconOpen = laptopIcon(closed: false)
     var menu: NSMenu!
     var switchRow: SwitchRow!
+    var loginRow: SwitchRow!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -164,10 +244,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu = NSMenu()
         menu.delegate = self
 
-        switchRow = SwitchRow(target: self, action: #selector(switchFlipped))
+        switchRow = SwitchRow(title: S.title,
+                              subtitle: S.subtitle,
+                              target: self,
+                              action: #selector(switchFlipped))
         let rowItem = NSMenuItem()
         rowItem.view = switchRow
         menu.addItem(rowItem)
+
+        loginRow = SwitchRow(title: S.launchTitle,
+                             subtitle: S.launchSubtitle,
+                             extraStateLabels: [S.approval, S.unavailable],
+                             target: self,
+                             action: #selector(loginFlipped))
+        let loginItem = NSMenuItem()
+        loginItem.view = loginRow
+        menu.addItem(loginItem)
 
         menu.addItem(.separator())
         let hint = NSMenuItem(title: S.hint, action: nil, keyEquivalent: "")
@@ -194,8 +286,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.cancelTracking()
     }
 
+    @objc func loginFlipped() {
+        guard #available(macOS 13.0, *) else {
+            refreshLoginItem()
+            return
+        }
+
+        let service = SMAppService.mainApp
+        let enable = loginRow.toggle.state == .on
+
+        do {
+            if enable {
+                if service.status == .notRegistered || service.status == .notFound {
+                    try service.register()
+                }
+            } else if service.status == .enabled || service.status == .requiresApproval {
+                try service.unregister()
+            }
+        } catch {
+            NSLog("AwakeToggle login item error: \(error)")
+        }
+
+        refreshLoginItem()
+        if service.status == .requiresApproval {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+        menu.cancelTracking()
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
-        switchRow.toggle.state = isOn() ? .on : .off
+        switchRow.setOn(isOn())
+        refreshLoginItem()
     }
 
     // Reading the current state needs no privileges.
@@ -212,15 +333,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.image = on ? iconClosed : iconOpen
             button.toolTip = S.tooltip(on: on)
         }
-        switchRow.toggle.state = on ? .on : .off
+        switchRow.setOn(on)
+        refreshLoginItem()
+    }
+
+    func refreshLoginItem() {
+        guard #available(macOS 13.0, *) else {
+            loginRow.toggle.isEnabled = false
+            loginRow.setState(on: false, label: S.unavailable, color: .secondaryLabelColor)
+            return
+        }
+
+        loginRow.toggle.isEnabled = true
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            loginRow.setOn(true)
+        case .requiresApproval:
+            loginRow.setState(on: true, label: S.approval, color: .systemOrange)
+        case .notRegistered, .notFound:
+            loginRow.setOn(false)
+        @unknown default:
+            loginRow.setOn(false)
+        }
     }
 
     func toggleAwake() {
         let target = isOn() ? "0" : "1"
-        let src = "do shell script \"/usr/bin/pmset -a disablesleep \(target)\" with administrator privileges"
-        var err: NSDictionary?
-        NSAppleScript(source: src)?.executeAndReturnError(&err)
-        if let err = err { NSLog("AwakeToggle error: \(err)") }
+        _ = shell("/usr/bin/sudo", ["-n", "/usr/bin/pmset", "-a", "disablesleep", target])
         refresh()
     }
 
