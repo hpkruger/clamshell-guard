@@ -94,11 +94,22 @@ socket:
    contain the complete conversation state.
 8. Sending `following: false` removes the subscription. Socket disconnect also
    cleans up the follower registration.
+9. When a conversation becomes an owner after an IPC client reconnects and it
+   has no recorded followers, it broadcasts
+   `thread-stream-following-status-requested`. Existing followers respond by
+   broadcasting `thread-stream-following-changed` with `following: true`
+   again. The owner then sends a fresh snapshot.
 
 At the time of inspection, `thread-stream-following-changed` was protocol
-version 1 and `thread-stream-state-changed` was version 11. AwakeToggle only
-sends the former. It accepts incoming state messages by method and payload
-shape rather than rejecting a future incoming version number.
+version 1, `thread-stream-following-status-requested` was version 1, and
+`thread-stream-state-changed` was version 11. AwakeToggle only sends the first
+of these. It accepts incoming state messages by method and payload shape rather
+than rejecting a future incoming version number.
+
+The inspected owner accepts a following broadcast only when its version exactly
+matches the version it knows. A version mismatch is ignored without an error or
+acknowledgement. Because an unloaded historical conversation also produces no
+response, silence alone cannot always prove that the protocol is incompatible.
 
 ## Discovering conversation IDs
 
@@ -142,6 +153,24 @@ current live task and reported `connecting / 0`, `connecting / 1`, then
 AUTO changed `SleepDisabled` from `0` to `1` within three seconds and it
 remained `1` beyond the ten-second grace window. ON opened no Codex IPC
 connection, while AUTO did.
+
+The repository's fake-router integration test additionally verifies:
+
+- an initial active snapshot is observed before the monitor settles as
+  available;
+- an owner disconnect preserves the last active count but changes availability
+  to unavailable;
+- `thread-stream-following-status-requested` causes AwakeToggle to reassert
+  `following: true`;
+- a fresh snapshot from the replacement owner restores availability; and
+- a subsequent active-to-idle patch is applied without treating a later idle
+  owner disconnect as an unknown active task.
+
+Run this coverage with:
+
+```bash
+./tests/run.sh
+```
 
 The initial active and idle snapshots, aggregate count, and active AUTO
 transition were therefore verified. Further release testing should still
@@ -221,6 +250,21 @@ AUTO mode distinguishes these states:
 
 The connection should be retried after failure. On reconnect, clear stale IPC
 state, rediscover candidate IDs, and request fresh snapshots.
+
+If an active conversation's owner disconnects, retain its last known active
+status and treat the monitor as unavailable until a replacement owner supplies
+a valid snapshot. An idle conversation cannot begin new work without an owner,
+so its status does not need the same fail-safe. The replacement owner can
+recover existing followers with
+`thread-stream-following-status-requested`.
+
+Initial availability uses a one-second settling window after candidate
+subscriptions are sent. This is a heuristic rather than a protocol
+acknowledgement: unloaded historical conversations intentionally remain silent.
+Detectable socket, database, framing, and payload failures become unavailable,
+but a future owner that silently ignores the current following method or
+version may be indistinguishable from having no loaded conversations. A Codex
+application update therefore remains a required compatibility smoke test.
 
 ## Sources
 

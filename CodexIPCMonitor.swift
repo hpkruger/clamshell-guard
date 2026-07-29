@@ -43,6 +43,7 @@ final class CodexIPCMonitor {
     private var statusByConversationID: [String: String] = [:]
     private var ownerByConversationID: [String: String] = [:]
     private var revisionByConversationID: [String: Int] = [:]
+    private var conversationsAwaitingOwner = Set<String>()
     private var availability: CodexMonitorAvailability = .connecting
     private var lastEmittedState: CodexActivityState?
     private var generation = 0
@@ -286,6 +287,11 @@ final class CodexIPCMonitor {
             return
         }
 
+        if method == "thread-stream-following-status-requested" {
+            handleFollowingStatusRequested(message)
+            return
+        }
+
         guard method == "thread-stream-state-changed",
               let params = message["params"] as? [String: Any],
               params["hostId"] as? String == "local",
@@ -305,6 +311,7 @@ final class CodexIPCMonitor {
                 return
             }
             statusByConversationID[conversationID] = statusType
+            conversationsAwaitingOwner.remove(conversationID)
             if let sourceClientID {
                 ownerByConversationID[conversationID] = sourceClientID
             }
@@ -326,6 +333,11 @@ final class CodexIPCMonitor {
     private func handlePatches(_ change: [String: Any],
                                conversationID: String,
                                sourceClientID: String?) {
+        guard !conversationsAwaitingOwner.contains(conversationID) else {
+            requestFreshSnapshot(for: conversationID)
+            return
+        }
+
         if let owner = ownerByConversationID[conversationID],
            let sourceClientID,
            owner != sourceClientID {
@@ -387,6 +399,15 @@ final class CodexIPCMonitor {
         }
     }
 
+    private func handleFollowingStatusRequested(_ message: [String: Any]) {
+        guard let params = message["params"] as? [String: Any],
+              params["hostId"] as? String == "local",
+              let conversationID = params["conversationId"] as? String,
+              subscribedConversationIDs.contains(conversationID) else { return }
+
+        sendFollowing(conversationID: conversationID, following: true)
+    }
+
     private func handleClientStatusChanged(_ message: [String: Any]) {
         guard let params = message["params"] as? [String: Any],
               params["status"] as? String == "disconnected",
@@ -398,12 +419,21 @@ final class CodexIPCMonitor {
         guard !affected.isEmpty else { return }
 
         for conversationID in affected {
+            let wasActive = statusByConversationID[conversationID] == "active"
             ownerByConversationID.removeValue(forKey: conversationID)
-            statusByConversationID.removeValue(forKey: conversationID)
             revisionByConversationID.removeValue(forKey: conversationID)
+            if wasActive {
+                conversationsAwaitingOwner.insert(conversationID)
+            } else {
+                statusByConversationID.removeValue(forKey: conversationID)
+            }
             requestFreshSnapshot(for: conversationID)
         }
-        emitState()
+        if conversationsAwaitingOwner.isEmpty {
+            emitState()
+        } else {
+            setAvailability(.unavailable)
+        }
     }
 
     private func discoverAndSubscribe() {
@@ -419,6 +449,7 @@ final class CodexIPCMonitor {
             statusByConversationID.removeValue(forKey: conversationID)
             ownerByConversationID.removeValue(forKey: conversationID)
             revisionByConversationID.removeValue(forKey: conversationID)
+            conversationsAwaitingOwner.remove(conversationID)
         }
 
         let added = candidates.subtracting(subscribedConversationIDs)
@@ -428,6 +459,10 @@ final class CodexIPCMonitor {
         }
 
         guard socketFD >= 0, clientID != nil else { return }
+        guard conversationsAwaitingOwner.isEmpty else {
+            setAvailability(.unavailable)
+            return
+        }
         if availability == .available {
             emitState()
             return
@@ -438,7 +473,8 @@ final class CodexIPCMonitor {
             guard let self,
                   self.running,
                   self.generation == currentGeneration,
-                  self.clientID != nil else { return }
+                  self.clientID != nil,
+                  self.conversationsAwaitingOwner.isEmpty else { return }
             self.setAvailability(.available)
         }
     }
@@ -573,6 +609,7 @@ final class CodexIPCMonitor {
         statusByConversationID.removeAll()
         ownerByConversationID.removeAll()
         revisionByConversationID.removeAll()
+        conversationsAwaitingOwner.removeAll()
         setAvailability(nextAvailability)
     }
 
