@@ -13,6 +13,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+swiftc -Onone -g -framework IOKit \
+    -o "$TEST_TEMP/SystemSleepAssertionTests" \
+    "$REPOSITORY/SystemSleepAssertion.swift" \
+    "$REPOSITORY/tests/SystemSleepAssertionTests.swift"
+
+"$TEST_TEMP/SystemSleepAssertionTests"
+
+swiftc -Onone -g -framework IOKit \
+    -o "$TEST_TEMP/ClamshellDisplaySleepControllerTests" \
+    "$REPOSITORY/ClamshellDisplaySleepController.swift" \
+    "$REPOSITORY/tests/ClamshellDisplaySleepControllerTests.swift"
+
+"$TEST_TEMP/ClamshellDisplaySleepControllerTests"
+
 python3 "$REPOSITORY/tests/fake_codex_router.py" "$TEST_TEMP/codex-home" &
 ROUTER_PID=$!
 

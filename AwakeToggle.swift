@@ -357,6 +357,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var codexActivity = CodexActivityState.connecting
     var lastActiveCount = 0
     var idleGraceDeadline: Date?
+    let systemSleepAssertion = SystemSleepAssertion()
+    let clamshellDisplaySleepController = ClamshellDisplaySleepController()
     lazy var codexMonitor = CodexIPCMonitor { [weak self] activity in
         self?.codexActivity = activity
         self?.evaluateMode()
@@ -387,6 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if awakeMode == .auto {
             setSleepDisabled(false)
         }
+        systemSleepAssertion.setActive(false)
     }
 
     func buildMenu() {
@@ -523,8 +526,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         lastActiveCount = activeCount
-        setSleepDisabled(desiredOn)
+        setKeepAwake(desiredOn)
+        clamshellDisplaySleepController.reconcile(
+            keepAwakeEnabled: desiredOn
+        )
         refreshUI()
+    }
+
+    func setKeepAwake(_ enabled: Bool) {
+        if enabled {
+            // Acquire the process-scoped assertion first, then apply the global
+            // lid-close setting. This closes the activation window in which
+            // ordinary system sleep could otherwise occur.
+            systemSleepAssertion.setActive(true)
+            setSleepDisabled(true)
+        } else {
+            setSleepDisabled(false)
+            systemSleepAssertion.setActive(false)
+        }
     }
 
     // Reading the current state needs no privileges.

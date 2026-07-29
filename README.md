@@ -219,7 +219,7 @@ Produces a universal binary (Intel + Apple silicon) targeting macOS 12+, ad-hoc 
 
 ## What it actually does
 
-The power-management operation is:
+The lid-close power-management operation is:
 
 ```bash
 sudo -n /usr/bin/pmset -a disablesleep 1
@@ -230,6 +230,23 @@ Turning keep-awake off uses the same command with `0`.
 `pmset` ships with macOS. `disablesleep 1` stops the system sleeping when the lid closes. The app is just a switch for it, so you don't open a terminal every time.
 
 `caffeinate` can't do this: it creates a *power assertion*, which holds off **idle** sleep. A lid close is an explicit sleep request, and no assertion overrides it. That's why `pmset` needs `sudo` and `caffeinate` doesn't.
+
+While ON, or while AUTO has an active Codex task, AwakeToggle also holds a
+process-scoped IOKit `PreventSystemSleep` assertion. This complements the global
+lid-close setting by preventing ordinary system sleep. macOS releases the
+assertion automatically if AwakeToggle exits or crashes; AwakeToggle also
+releases it explicitly when keep-awake turns off.
+
+When the lid changes from open to closed while keep-awake protection is active,
+AwakeToggle also runs:
+
+```bash
+/usr/bin/pmset displaysleepnow
+```
+
+This puts all connected displays to sleep without putting the Mac itself to
+sleep. The command runs once per lid-close transition; polling while the lid
+remains closed does not repeatedly blank displays.
 
 > ### ⚠️ Heat and battery
 > Sleep stays disabled until you turn it back off — **a reboot doesn't reset it.** A Mac still running inside a closed bag has nowhere to dump heat and will drain flat. Watch the icon and switch it off when you're done. This is the reason there's a visible menu-bar indicator instead of a fire-and-forget script.

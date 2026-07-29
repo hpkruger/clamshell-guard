@@ -14,8 +14,10 @@ for arch in arm64 x86_64; do
     swiftc -O \
         -target "${arch}-apple-macos${DEPLOY_TARGET}" \
         -lsqlite3 \
+        -framework IOKit \
         -o "$BUILD/AwakeToggle-$arch" \
-        AwakeToggle.swift CodexIPCMonitor.swift
+        AwakeToggle.swift CodexIPCMonitor.swift SystemSleepAssertion.swift \
+        ClamshellDisplaySleepController.swift
 done
 
 lipo -create "$BUILD/AwakeToggle-arm64" "$BUILD/AwakeToggle-x86_64" \
