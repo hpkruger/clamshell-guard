@@ -41,12 +41,16 @@ enum S {
     static let on = t("ON", "开启", "ACTIF")
     static let auto = t("AUTO", "自动", "AUTO")
     static let off = t("OFF", "关闭", "INACTIF")
-    static let approval = t("APPROVAL", "需批准", "APPROBATION")
-    static let unavailable = t("UNAVAILABLE", "不可用", "INDISPONIBLE")
     static let launchTitle = t("Launch on Login", "登录时启动", "Ouvrir à la connexion")
-    static let launchSubtitle = t("Start AwakeToggle automatically",
-                                  "登录后自动启动 AwakeToggle",
-                                  "Démarrer AwakeToggle automatiquement")
+    static let launchSubtitle = t("Start automatically",
+                                  "自动启动",
+                                  "Démarrer automatiquement")
+    static let launchApproval = t("Approval required in System Settings",
+                                  "需要在系统设置中批准",
+                                  "Approbation requise dans Réglages Système")
+    static let launchUnavailable = t("Requires macOS 13 or later",
+                                     "需要 macOS 13 或更高版本",
+                                     "Nécessite macOS 13 ou une version ultérieure")
 
     static let alwaysAwake = t("Always preventing sleep",
                                "始终阻止休眠",
@@ -188,14 +192,19 @@ func laptopIcon(closed: Bool) -> NSImage {
 // MARK: - Switch row shown inside the menu
 
 final class ModeControl: NSSegmentedControl {
-    init() {
+    private let selectedColors: [NSColor]
+
+    init(labels: [String],
+         selectedColors: [NSColor],
+         initialSegment: Int) {
+        self.selectedColors = selectedColors
         super.init(frame: .zero)
-        segmentCount = 3
+        segmentCount = labels.count
         trackingMode = .selectOne
-        setLabel(S.on, forSegment: 0)
-        setLabel(S.auto, forSegment: 1)
-        setLabel(S.off, forSegment: 2)
-        selectedSegment = AwakeMode.off.segment
+        for (index, label) in labels.enumerated() {
+            setLabel(label, forSegment: index)
+        }
+        selectedSegment = initialSegment
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -204,7 +213,7 @@ final class ModeControl: NSSegmentedControl {
         NSColor.quaternaryLabelColor.setFill()
         background.fill()
 
-        let segmentWidth = outer.width / 3
+        let segmentWidth = outer.width / CGFloat(segmentCount)
         let selected = NSRect(x: outer.minX + CGFloat(selectedSegment) * segmentWidth,
                               y: outer.minY,
                               width: segmentWidth,
@@ -212,19 +221,18 @@ final class ModeControl: NSSegmentedControl {
         let selectedPath = NSBezierPath(roundedRect: selected.insetBy(dx: 1, dy: 1),
                                         xRadius: 5,
                                         yRadius: 5)
-        let selectedColor: NSColor
-        switch AwakeMode(segment: selectedSegment) {
-        case .on: selectedColor = .systemGreen
-        case .auto: selectedColor = .systemBlue
-        case .off, .none: selectedColor = .systemGray
-        }
-        selectedColor.setFill()
+        let defaultSelectedColor = selectedColors.indices.contains(selectedSegment)
+            ? selectedColors[selectedSegment]
+            : NSColor.systemGray
+        defaultSelectedColor.withAlphaComponent(isEnabled ? 1 : 0.45).setFill()
         selectedPath.fill()
 
         let font = NSFont.boldSystemFont(ofSize: 10)
-        for index in 0..<3 {
+        for index in 0..<segmentCount {
             let label = label(forSegment: index) ?? ""
-            let color = index == selectedSegment ? NSColor.white : NSColor.labelColor
+            let color = index == selectedSegment
+                ? NSColor.white.withAlphaComponent(isEnabled ? 1 : 0.65)
+                : NSColor.labelColor.withAlphaComponent(isEnabled ? 1 : 0.45)
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: color
@@ -245,7 +253,9 @@ final class ModeControl: NSSegmentedControl {
 }
 
 final class ModeRow: NSView {
-    let modeControl = ModeControl()
+    let modeControl = ModeControl(labels: [S.on, S.auto, S.off],
+                                  selectedColors: [.systemBlue, .systemBlue, .systemGray],
+                                  initialSegment: AwakeMode.off.segment)
     let title = NSTextField(labelWithString: S.title)
     let subtitle = NSTextField(labelWithString: S.subtitle)
 
@@ -281,127 +291,58 @@ final class ModeRow: NSView {
         switch mode {
         case .on:
             subtitle.stringValue = S.alwaysAwake
-            subtitle.textColor = .systemGreen
         case .auto where activeCount > 0:
             subtitle.stringValue = S.autoActive(activeCount)
-            subtitle.textColor = .systemGreen
         case .auto:
             subtitle.stringValue = S.autoIdle
-            subtitle.textColor = .secondaryLabelColor
         case .off:
             subtitle.stringValue = S.normalSleep
-            subtitle.textColor = .secondaryLabelColor
         }
+        subtitle.textColor = .secondaryLabelColor
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 }
 
-// NSSwitch uses an inactive grey track when a menu-bar-only app is not the
-// foreground application. Draw the track explicitly so the ON state remains
-// unmistakable even while another app is active.
-final class AwakeSwitch: NSSwitch {
-    var onColor = NSColor.systemGreen {
-        didSet { needsDisplay = true }
-    }
+final class LoginRow: NSView {
+    let modeControl = ModeControl(labels: [S.on, S.off],
+                                  selectedColors: [.systemBlue, .systemGray],
+                                  initialSegment: 1)
+    let title = NSTextField(labelWithString: S.launchTitle)
+    let subtitle = NSTextField(labelWithString: S.launchSubtitle)
 
-    override func draw(_ dirtyRect: NSRect) {
-        let trackRect = bounds.insetBy(dx: 1, dy: 1)
-        let track = NSBezierPath(roundedRect: trackRect,
-                                 xRadius: trackRect.height / 2,
-                                 yRadius: trackRect.height / 2)
-        (state == .on ? onColor : NSColor.tertiaryLabelColor).setFill()
-        track.fill()
-
-        let inset: CGFloat = 2
-        let knobSize = trackRect.height - inset * 2
-        let knobX = state == .on
-            ? trackRect.maxX - inset - knobSize
-            : trackRect.minX + inset
-        let knobRect = NSRect(x: knobX,
-                              y: trackRect.minY + inset,
-                              width: knobSize,
-                              height: knobSize)
-
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
-        shadow.shadowBlurRadius = 1.5
-        shadow.shadowOffset = NSSize(width: 0, height: -0.5)
-        shadow.set()
-        NSColor.white.setFill()
-        NSBezierPath(ovalIn: knobRect).fill()
-        NSGraphicsContext.restoreGraphicsState()
-    }
-}
-
-final class SwitchRow: NSView {
-    let toggle = AwakeSwitch()
-    let title: NSTextField
-    let subtitle: NSTextField
-    let stateLabel = NSTextField(labelWithString: S.off)
-
-    init(title titleText: String,
-         subtitle subtitleText: String,
-         extraStateLabels: [String] = [],
-         target: AnyObject,
-         action: Selector) {
-        title = NSTextField(labelWithString: titleText)
-        subtitle = NSTextField(labelWithString: subtitleText)
+    init(target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         title.font = .menuFont(ofSize: 13)
         subtitle.font = .menuFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
-        let stateFont = NSFont.boldSystemFont(ofSize: 11)
-        stateLabel.font = stateFont
-        stateLabel.alignment = .right
-        toggle.target = target
-        toggle.action = action
+        modeControl.target = target
+        modeControl.action = action
 
-        // Size the row to its own text so every language fits without clipping,
-        // instead of hard-coding a width that only suits one of them.
-        title.sizeToFit()
-        subtitle.sizeToFit()
-        let textWidth = max(title.frame.width, subtitle.frame.width)
-        let stateWidth = ([S.on, S.off] + extraStateLabels)
-            .map { ($0 as NSString).size(withAttributes: [.font: stateFont]).width }
-            .max() ?? 0
+        let textWidth: CGFloat = 235
         let padding: CGFloat = 14
-        let gap: CGFloat = 24
-        let stateGap: CGFloat = 9
-        let switchWidth: CGFloat = 42
+        let gap: CGFloat = 20
+        let controlWidth: CGFloat = 174
 
         frame = NSRect(x: 0, y: 0,
-                       width: padding + textWidth + gap + stateWidth + stateGap
-                            + switchWidth + padding,
-                       height: 48)
-        title.frame = NSRect(x: padding, y: 25,
-                             width: textWidth, height: title.frame.height)
-        subtitle.frame = NSRect(x: padding, y: 9,
-                                width: textWidth, height: subtitle.frame.height)
-        stateLabel.frame = NSRect(x: padding + textWidth + gap, y: 17,
-                                  width: stateWidth, height: 14)
-        toggle.frame = NSRect(x: stateLabel.frame.maxX + stateGap, y: 13,
-                              width: switchWidth, height: 22)
+                       width: padding + textWidth + gap + controlWidth + padding,
+                       height: 54)
+        title.frame = NSRect(x: padding, y: 29, width: textWidth, height: 16)
+        subtitle.frame = NSRect(x: padding, y: 10, width: textWidth, height: 15)
+        modeControl.frame = NSRect(x: padding + textWidth + gap, y: 15,
+                                   width: controlWidth, height: 25)
 
         addSubview(title)
         addSubview(subtitle)
-        addSubview(stateLabel)
-        addSubview(toggle)
+        addSubview(modeControl)
     }
 
-    func setOn(_ on: Bool) {
-        setState(on: on,
-                 label: on ? S.on : S.off,
-                 color: on ? .systemGreen : .secondaryLabelColor)
-    }
-
-    func setState(on: Bool, label: String, color: NSColor) {
-        toggle.onColor = color
-        toggle.state = on ? .on : .off
-        toggle.needsDisplay = true
-        stateLabel.stringValue = label
-        stateLabel.textColor = color
+    func update(on: Bool,
+                subtitle text: String = S.launchSubtitle) {
+        modeControl.selectedSegment = on ? 0 : 1
+        modeControl.needsDisplay = true
+        subtitle.stringValue = text
+        subtitle.textColor = .secondaryLabelColor
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -418,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let iconOpen = laptopIcon(closed: false)
     var menu: NSMenu!
     var modeRow: ModeRow!
-    var loginRow: SwitchRow!
+    var loginRow: LoginRow!
     var awakeMode = AwakeMode.off
     var monitorTimer: Timer?
     var lastActiveCount = 0
@@ -456,11 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modeItem.view = modeRow
         menu.addItem(modeItem)
 
-        loginRow = SwitchRow(title: S.launchTitle,
-                             subtitle: S.launchSubtitle,
-                             extraStateLabels: [S.approval, S.unavailable],
-                             target: self,
-                             action: #selector(loginFlipped))
+        loginRow = LoginRow(target: self, action: #selector(loginFlipped))
         let loginItem = NSMenuItem()
         loginItem.view = loginRow
         menu.addItem(loginItem)
@@ -505,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let service = SMAppService.mainApp
-        let enable = loginRow.toggle.state == .on
+        let enable = loginRow.modeControl.selectedSegment == 0
 
         do {
             if enable {
@@ -624,21 +561,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refreshLoginItem() {
         guard #available(macOS 13.0, *) else {
-            loginRow.toggle.isEnabled = false
-            loginRow.setState(on: false, label: S.unavailable, color: .secondaryLabelColor)
+            loginRow.modeControl.isEnabled = false
+            loginRow.update(on: false, subtitle: S.launchUnavailable)
             return
         }
 
-        loginRow.toggle.isEnabled = true
+        loginRow.modeControl.isEnabled = true
         switch SMAppService.mainApp.status {
         case .enabled:
-            loginRow.setOn(true)
+            loginRow.update(on: true)
         case .requiresApproval:
-            loginRow.setState(on: true, label: S.approval, color: .systemOrange)
+            loginRow.update(on: true, subtitle: S.launchApproval)
         case .notRegistered, .notFound:
-            loginRow.setOn(false)
+            loginRow.update(on: false)
         @unknown default:
-            loginRow.setOn(false)
+            loginRow.update(on: false)
         }
     }
 
