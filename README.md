@@ -18,9 +18,10 @@ macOS 12+ · Intel and Apple silicon
 
 ## Installation
 
-AUTO mode has three separate pieces: the app in `/Applications`, a narrowly
-scoped sudoers rule for changing the sleep setting without repeated password
-prompts, and Codex hooks that report when tasks start and stop.
+AUTO mode needs the app in `/Applications` and a narrowly scoped sudoers rule
+for changing the sleep setting without repeated password prompts. AwakeToggle
+reads live task status directly from the local Codex Desktop app; no Codex hook
+configuration is required.
 
 ### 1. Build and install the app
 
@@ -36,9 +37,6 @@ open /Applications/AwakeToggle.app
 `./build.sh` creates a universal Intel/Apple-silicon app and
 `AwakeToggle.zip`. You can drag the app into **Applications** instead of using
 `ditto`.
-
-The Codex hook configuration below deliberately uses the absolute path
-`/Applications/AwakeToggle.app`. Install the app there before enabling AUTO.
 
 If macOS blocks the first launch because this locally built app is not
 notarized, follow the [Opening an unnotarized build](#opening-an-unnotarized-build)
@@ -99,41 +97,7 @@ absolute path, and arguments.
 > option. The two-command rule above is safer because it matches only the exact
 > ON and OFF operations used by AwakeToggle.
 
-### 3. Install the Codex hooks for AUTO mode
-
-The repository includes [`codex-hooks.example.json`](codex-hooks.example.json).
-If `~/.codex/hooks.json` does **not** exist yet:
-
-```bash
-mkdir -p ~/.codex
-cp codex-hooks.example.json ~/.codex/hooks.json
-chmod 600 ~/.codex/hooks.json
-```
-
-If the file already exists, do not overwrite it. Merge the example's
-`UserPromptSubmit`, `Stop`, and `SessionEnd` entries into the corresponding
-arrays under your existing top-level `hooks` object. Keep any hooks already
-present.
-
-The three commands invoke the helper bundled inside the app:
-
-```text
-"/Applications/AwakeToggle.app/Contents/MacOS/AwakeToggleHook" start
-"/Applications/AwakeToggle.app/Contents/MacOS/AwakeToggleHook" stop
-"/Applications/AwakeToggle.app/Contents/MacOS/AwakeToggleHook" session-end
-```
-
-Restart the macOS Codex app after creating or changing `hooks.json`. Open
-Codex's `/hooks` screen, inspect these exact commands, and trust them. Codex
-intentionally refuses to run a newly added non-managed hook until you approve
-its definition.
-
-The helper accepts start events only when it was launched by the official
-macOS Codex app (`com.openai.codex`). It writes no task content—only the
-session/turn identifiers, Codex app-server process ID, and start time needed to
-track active tasks.
-
-### 4. Test AUTO
+### 3. Test AUTO
 
 1. Start AwakeToggle and select **AUTO**.
 2. Start a new task in the macOS Codex app.
@@ -148,10 +112,10 @@ You can inspect the underlying state at any time:
 ```
 
 `SleepDisabled 1` means keep-awake is active; `0` means macOS may sleep
-normally. Tasks that were already running before the hooks were installed,
-trusted, and loaded are not retroactively detected.
+normally. Tasks already running when AwakeToggle starts are detected from
+Codex's current state.
 
-### 5. Optional: launch at login
+### 4. Optional: launch at login
 
 Open the AwakeToggle menu and enable **Launch on Login**. This uses
 `SMAppService`, macOS's native login-item API. If macOS reports that approval is
@@ -179,25 +143,29 @@ macOS's native login-item service.
 
 ### AUTO mode
 
-AUTO uses Codex's `UserPromptSubmit`, `Stop`, and `SessionEnd` hooks. The bundled
-`AwakeToggleHook` helper writes a small marker for each active Codex turn under:
+AUTO connects to Codex Desktop's per-user Unix socket:
 
 ```text
-~/Library/Application Support/AwakeToggle/active-turns
+~/.codex/ipc/ipc.sock
 ```
 
-AwakeToggle checks these markers every two seconds. It enables keep-awake while
-at least one task is active, supports concurrent tasks, and waits 10 seconds
-after the last task ends before allowing sleep.
+It discovers recently updated task IDs from Codex's local state database and
+subscribes to their live runtime state. It enables keep-awake while at least one
+task reports `active`, supports concurrent tasks, and waits 10 seconds after the
+last task ends before allowing sleep. This avoids maintaining a separate task
+counter, so cancellation and missed lifecycle events cannot leave stale marker
+files.
 
-The helper accepts start events only when its parent process belongs to the
-official macOS Codex app (`com.openai.codex`). It has no network code.
+This IPC interface is private to Codex Desktop and may change in a future Codex
+release. If AwakeToggle cannot validate the socket, open the state database, or
+understand the IPC response, it shows `AUTO · Codex status unavailable` rather
+than claiming there are no active tasks. It reconnects automatically.
 
-The required user-level Codex configuration is shown in
-[`codex-hooks.example.json`](codex-hooks.example.json). Copy or merge those
-entries into `~/.codex/hooks.json`, restart Codex, then review and trust the
-commands in Codex's `/hooks` screen. Codex intentionally will not execute a new
-non-managed hook until you approve its exact definition.
+Codex snapshots can contain more than runtime status. AwakeToggle extracts only
+`threadRuntimeStatus`, does not log or retain snapshot contents, and makes no
+network requests. The complete protocol investigation, validation evidence,
+and compatibility notes are recorded in
+[`docs/CODEX_IPC_RESEARCH.md`](docs/CODEX_IPC_RESEARCH.md).
 
 ---
 
@@ -212,8 +180,8 @@ the honest cost of that, so treat it like any unsigned binary from a stranger:
 
 ### Don't trust me — read it
 
-- The menu-bar app is in [`AwakeToggle.swift`](AwakeToggle.swift), and the small
-  Codex hook helper is in [`AwakeToggleHook.swift`](AwakeToggleHook.swift).
+- The menu-bar app is in [`AwakeToggle.swift`](AwakeToggle.swift), and its
+  Codex status monitor is in [`CodexIPCMonitor.swift`](CodexIPCMonitor.swift).
 - The only privileged thing it does is `pmset -a disablesleep 0/1` — Apple's own power-management command.
 - **No network access or data collection.**
 - [Build it yourself](#build-it-yourself) in one command and get the same app.
@@ -277,18 +245,14 @@ Turning keep-awake off uses the same command with `0`.
    sudo /usr/bin/pmset -a disablesleep 0
    ```
 
-3. Remove the three AwakeToggle entries from `~/.codex/hooks.json`. Delete the
-   entire file only if it contains no other hooks.
-4. Remove the dedicated sudoers file:
+3. Remove the dedicated sudoers file:
 
    ```bash
    sudo rm /etc/sudoers.d/awaketoggle-pmset
    ```
 
    If you used a differently named file, remove only that exact file.
-5. Quit AwakeToggle and move `/Applications/AwakeToggle.app` to the Trash.
-6. Optional task markers can be removed from
-   `~/Library/Application Support/AwakeToggle/active-turns`.
+4. Quit AwakeToggle and move `/Applications/AwakeToggle.app` to the Trash.
 
 Restoring `disablesleep 0` before deleting the app matters because the macOS
 power setting can outlive the process that changed it.
@@ -318,8 +282,8 @@ If enough people use it, I'll reconsider the developer certificate so the warnin
 我没买。这是我写给自己用的小工具,免费送出来,没理由每年为它掏 99 美元。所以这个警告是正常的 —— 但也别光信我:
 
 - **全部源码就在这里**：菜单栏 App 为
-  [`AwakeToggle.swift`](AwakeToggle.swift)，Codex hook 辅助程序为
-  [`AwakeToggleHook.swift`](AwakeToggleHook.swift)
+  [`AwakeToggle.swift`](AwakeToggle.swift)，Codex 状态监控程序为
+  [`CodexIPCMonitor.swift`](CodexIPCMonitor.swift)
 - 唯一需要权限的操作就是 `pmset -a disablesleep`(macOS 自带命令)
 - **不联网 · 不收集数据**；登录时启动为可选设置
 - 不放心可以自己 `./build.sh` 编译,结果一模一样

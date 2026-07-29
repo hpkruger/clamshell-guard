@@ -1,5 +1,4 @@
 import Cocoa
-import Darwin
 import ServiceManagement
 
 // AwakeToggle — a menu-bar controller for `pmset -a disablesleep`.
@@ -61,6 +60,12 @@ enum S {
     static let autoIdle = t("AUTO · No active Codex tasks",
                             "自动 · 没有活动的 Codex 任务",
                             "AUTO · Aucune tâche Codex active")
+    static let autoConnecting = t("AUTO · Connecting to Codex",
+                                  "自动 · 正在连接 Codex",
+                                  "AUTO · Connexion à Codex")
+    static let autoUnavailable = t("AUTO · Codex status unavailable",
+                                   "自动 · Codex 状态不可用",
+                                   "AUTO · État Codex indisponible")
 
     static func autoActive(_ count: Int) -> String {
         t("AUTO · \(count) active Codex task\(count == 1 ? "" : "s")",
@@ -68,16 +73,25 @@ enum S {
           "AUTO · \(count) tâche\(count == 1 ? "" : "s") Codex active\(count == 1 ? "" : "s")")
     }
 
-    static func tooltip(mode: AwakeMode, actualOn: Bool, activeCount: Int) -> String {
+    static func tooltip(mode: AwakeMode,
+                        actualOn: Bool,
+                        activity: CodexActivityState) -> String {
         switch mode {
         case .on:
             return t("Keep Awake: ON — always preventing sleep",
                      "常驻在线：开启 — 始终阻止休眠",
                      "Rester éveillé : ACTIF — veille toujours désactivée")
         case .auto:
-            return actualOn
-                ? autoActive(activeCount)
-                : autoIdle
+            switch activity.availability {
+            case .connecting:
+                return autoConnecting
+            case .unavailable:
+                return autoUnavailable
+            case .available:
+                return activity.activeCount > 0
+                    ? autoActive(activity.activeCount)
+                    : autoIdle
+            }
         case .off:
             return t("Keep Awake: OFF — normal sleep",
                      "常驻在线：关闭 — 正常休眠",
@@ -107,35 +121,6 @@ enum AwakeMode: String {
         default: return nil
         }
     }
-}
-
-struct TurnMarker: Codable {
-    let sessionID: String
-    let turnID: String
-    let appServerPID: Int32
-    let startedAt: Date
-}
-
-func activeTurnDirectory() -> URL {
-    FileManager.default.urls(for: .applicationSupportDirectory,
-                             in: .userDomainMask)[0]
-        .appendingPathComponent("AwakeToggle/active-turns", isDirectory: true)
-}
-
-func executablePath(of pid: pid_t) -> String? {
-    var buffer = [CChar](repeating: 0, count: 4096)
-    guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
-    return String(cString: buffer)
-}
-
-func isCodexDesktopAppServer(_ pid: pid_t) -> Bool {
-    guard let path = executablePath(of: pid),
-          path.hasSuffix(".app/Contents/Resources/codex") else { return false }
-    let appURL = URL(fileURLWithPath: path)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    return Bundle(url: appURL)?.bundleIdentifier == "com.openai.codex"
 }
 
 // MARK: - Icons
@@ -285,16 +270,23 @@ final class ModeRow: NSView {
         addSubview(modeControl)
     }
 
-    func update(mode: AwakeMode, activeCount: Int) {
+    func update(mode: AwakeMode, activity: CodexActivityState) {
         modeControl.selectedSegment = mode.segment
         modeControl.needsDisplay = true
         switch mode {
         case .on:
             subtitle.stringValue = S.alwaysAwake
-        case .auto where activeCount > 0:
-            subtitle.stringValue = S.autoActive(activeCount)
         case .auto:
-            subtitle.stringValue = S.autoIdle
+            switch activity.availability {
+            case .connecting:
+                subtitle.stringValue = S.autoConnecting
+            case .unavailable:
+                subtitle.stringValue = S.autoUnavailable
+            case .available where activity.activeCount > 0:
+                subtitle.stringValue = S.autoActive(activity.activeCount)
+            case .available:
+                subtitle.stringValue = S.autoIdle
+            }
         case .off:
             subtitle.stringValue = S.normalSleep
         }
@@ -362,8 +354,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var loginRow: LoginRow!
     var awakeMode = AwakeMode.off
     var monitorTimer: Timer?
+    var codexActivity = CodexActivityState.connecting
     var lastActiveCount = 0
     var idleGraceDeadline: Date?
+    lazy var codexMonitor = CodexIPCMonitor { [weak self] activity in
+        self?.codexActivity = activity
+        self?.evaluateMode()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         awakeMode = loadAwakeMode()
@@ -372,6 +369,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.target = self
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        if awakeMode == .auto {
+            codexMonitor.start()
         }
         monitorTimer = Timer.scheduledTimer(timeInterval: 2,
                                             target: self,
@@ -383,6 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        codexMonitor.stop()
         if awakeMode == .auto {
             setSleepDisabled(false)
         }
@@ -424,9 +425,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let selected = AwakeMode(segment: modeRow.modeControl.selectedSegment) else {
             return
         }
+        let previousMode = awakeMode
         awakeMode = selected
         UserDefaults.standard.set(selected.rawValue, forKey: modeDefaultsKey)
         idleGraceDeadline = nil
+        if selected == .auto && previousMode != .auto {
+            codexActivity = .connecting
+            codexMonitor.start()
+        } else if selected != .auto && previousMode == .auto {
+            codexMonitor.stop()
+            codexActivity = .connecting
+        }
         evaluateMode()
         menu.cancelTracking()
     }
@@ -475,32 +484,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return isOn() ? .on : .off
     }
 
-    func activeCodexTurnCount() -> Int {
-        let directory = activeTurnDirectory()
-        let fileManager = FileManager.default
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        guard let files = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil
-        ) else { return 0 }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        var count = 0
-        for file in files where file.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: file),
-                  let marker = try? decoder.decode(TurnMarker.self, from: data),
-                  isCodexDesktopAppServer(marker.appServerPID) else {
-                try? fileManager.removeItem(at: file)
-                continue
-            }
-            count += 1
-        }
-        return count
-    }
-
     func evaluateMode() {
-        let activeCount = activeCodexTurnCount()
+        let activeCount = codexActivity.activeCount
         let desiredOn: Bool
 
         switch awakeMode {
@@ -511,9 +496,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             idleGraceDeadline = nil
             desiredOn = false
         case .auto:
-            if activeCount > 0 {
+            if codexActivity.availability == .available && activeCount > 0 {
                 idleGraceDeadline = nil
                 desiredOn = true
+            } else if codexActivity.availability != .available {
+                if idleGraceDeadline == nil && (lastActiveCount > 0 || isOn()) {
+                    idleGraceDeadline = Date().addingTimeInterval(idleGraceSeconds)
+                }
+                if let deadline = idleGraceDeadline, deadline > Date() {
+                    desiredOn = isOn()
+                } else {
+                    idleGraceDeadline = nil
+                    desiredOn = false
+                }
             } else {
                 if lastActiveCount > 0 {
                     idleGraceDeadline = Date().addingTimeInterval(idleGraceSeconds)
@@ -529,7 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         lastActiveCount = activeCount
         setSleepDisabled(desiredOn)
-        refreshUI(activeCount: activeCount)
+        refreshUI()
     }
 
     // Reading the current state needs no privileges.
@@ -547,15 +542,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                   ["-n", "/usr/bin/pmset", "-a", "disablesleep", disabled ? "1" : "0"])
     }
 
-    func refreshUI(activeCount: Int) {
+    func refreshUI() {
         let actualOn = isOn()
         if let button = statusItem.button {
             button.image = actualOn ? iconClosed : iconOpen
             button.toolTip = S.tooltip(mode: awakeMode,
                                        actualOn: actualOn,
-                                       activeCount: activeCount)
+                                       activity: codexActivity)
         }
-        modeRow.update(mode: awakeMode, activeCount: activeCount)
+        modeRow.update(mode: awakeMode, activity: codexActivity)
         refreshLoginItem()
     }
 
@@ -592,8 +587,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)   // menu-bar only, no Dock icon
-app.run()
+@main
+struct AwakeToggleApplication {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)   // menu-bar only, no Dock icon
+        app.run()
+    }
+}
