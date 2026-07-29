@@ -10,7 +10,12 @@ BUILD="build"
 DEPLOY_TARGET="12.0"
 
 rm -rf "$BUILD" "$APP"
-mkdir -p "$BUILD" "$APP/Contents/MacOS"
+mkdir -p "$BUILD" "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+ICONSET="$BUILD/ClamshellGuard.iconset"
+tools/export-app-icon.sh "$ICONSET"
+iconutil -c icns "$ICONSET" \
+    -o "$APP/Contents/Resources/ClamshellGuard.icns"
 
 for arch in arm64 x86_64; do
     swiftc -O \
@@ -36,6 +41,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>1.1.0</string>
     <key>CFBundleShortVersionString</key><string>1.1.0</string>
     <key>CFBundleExecutable</key><string>$EXECUTABLE</string>
+    <key>CFBundleIconFile</key><string>ClamshellGuard</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>LSMinimumSystemVersion</key><string>${DEPLOY_TARGET}</string>
     <key>LSUIElement</key><true/>
