@@ -345,7 +345,7 @@ final class LoginRow: NSView {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let modeDefaultsKey = "AwakeMode"
     private let legacyDefaultsSuite = "com.machinefriendly.awaketoggle"
-    private let idleGraceSeconds: TimeInterval = 10
+    private let idleGraceSeconds: TimeInterval = 5
 
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let iconClosed = laptopIcon(closed: true)

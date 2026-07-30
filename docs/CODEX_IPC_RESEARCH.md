@@ -151,7 +151,7 @@ After implementation, a standalone build of `CodexIPCMonitor` observed the
 current live task and reported `connecting / 0`, `connecting / 1`, then
 `available / 1`. The installed app was also tested from a known OFF baseline:
 AUTO changed `SleepDisabled` from `0` to `1` within three seconds and it
-remained `1` beyond the ten-second grace window. ON opened no Codex IPC
+remained `1` beyond the five-second grace window. ON opened no Codex IPC
 connection, while AUTO did.
 
 The repository's fake-router integration test additionally verifies:
@@ -243,7 +243,7 @@ privacy-sensitive than consuming the runtime state already published on IPC.
 AUTO mode distinguishes these states:
 
 - **available with active tasks**: keep awake;
-- **available with no active tasks**: allow sleep after the ten-second grace
+- **available with no active tasks**: allow sleep after the five-second grace
   period;
 - **unavailable or incompatible**: show a status-unavailable message and avoid
   claiming there are zero active tasks.

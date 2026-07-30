@@ -32,7 +32,7 @@ and adds:
 | Authorization | macOS administrator prompt when toggled | Non-interactive `sudo -n` with a sudoers rule restricted to the exact on/off commands |
 | Verification | Minimal upstream source | Unit/integration tests and documented [Codex IPC research](docs/CODEX_IPC_RESEARCH.md) |
 
-AUTO mode waits 10 seconds after the final Codex task finishes before restoring
+AUTO mode waits 5 seconds after the final Codex task finishes before restoring
 normal sleep. If Codex status cannot be read reliably, it reports that status as
 unavailable instead of treating the failure as zero active tasks.
 
@@ -135,7 +135,7 @@ absolute path, and arguments.
 1. Start Clamshell Guard and select **AUTO**.
 2. Start a new task in the macOS Codex app.
 3. Clamshell Guard should show `AUTO · 1 active Codex task`.
-4. When the task finishes, Clamshell Guard waits 10 seconds and returns to
+4. When the task finishes, Clamshell Guard waits 5 seconds and returns to
    `AUTO · No active Codex tasks`.
 
 You can inspect the underlying state at any time:
@@ -184,7 +184,7 @@ AUTO connects to Codex Desktop's per-user Unix socket:
 
 It discovers recently updated task IDs from Codex's local state database and
 subscribes to their live runtime state. It enables keep-awake while at least one
-task reports `active`, supports concurrent tasks, and waits 10 seconds after the
+task reports `active`, supports concurrent tasks, and waits 5 seconds after the
 last task ends before allowing sleep. This avoids maintaining a separate task
 counter, so cancellation and missed lifecycle events cannot leave stale marker
 files.
