@@ -1,6 +1,8 @@
 # Clamshell Guard
 
-A menu-bar controller that keeps your Mac awake **with the lid closed.**
+Keep long-running Codex tasks alive even when you close your MacBook lid.
+Clamshell Guard automatically prevents sleep while Codex is working, then
+restores normal sleep when the task finishes.
 
 ![Clamshell Guard automatically following a Codex task](docs/clamshell-guard-auto-demo.gif)
 
