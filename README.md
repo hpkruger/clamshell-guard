@@ -2,6 +2,8 @@
 
 A menu-bar controller that keeps your Mac awake **with the lid closed.**
 
+![Clamshell Guard automatically following a Codex task](docs/clamshell-guard-auto-demo.gif)
+
 > [!IMPORTANT]
 > **This is a fork of
 > [`machinefriendly/awaketoggle`](https://github.com/machinefriendly/awaketoggle).**
@@ -35,8 +37,6 @@ and adds:
 AUTO mode waits 5 seconds after the final Codex task finishes before restoring
 normal sleep. If Codex status cannot be read reliably, it reports that status as
 unavailable instead of treating the failure as zero active tasks.
-
-<!-- TODO: menu-bar screenshot -->
 
 macOS 12+ · Intel and Apple silicon
 
