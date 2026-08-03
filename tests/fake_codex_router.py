@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 CONVERSATION_ID = "00000000-0000-0000-0000-000000000001"
-SIDE_AGENT_ID = "00000000-0000-0000-0000-000000000002"
+SIDE_CONVERSATION_ID = "00000000-0000-0000-0000-000000000002"
 
 
 def send_frame(connection: socket.socket, message: dict) -> None:
@@ -44,24 +44,10 @@ def state_snapshot(
     revision: int,
     status: str,
     conversation_id: str,
-    side_agent_status: str | None = None,
 ) -> dict:
     conversation_state = {
         "threadRuntimeStatus": {"type": status, "activeFlags": []}
     }
-    if side_agent_status is not None:
-        conversation_state["turns"] = [
-            {
-                "items": [
-                    {
-                        "type": "collabAgentToolCall",
-                        "agentsStates": {
-                            SIDE_AGENT_ID: {"status": side_agent_status}
-                        },
-                    }
-                ]
-            }
-        ]
 
     return {
         "type": "broadcast",
@@ -98,10 +84,6 @@ def main() -> int:
         "INSERT INTO threads VALUES (?, ?, 0)",
         (CONVERSATION_ID, int(time.time())),
     )
-    database.execute(
-        "INSERT INTO threads VALUES (?, ?, 0)",
-        (SIDE_AGENT_ID, int(time.time())),
-    )
     database.commit()
     database.close()
 
@@ -116,13 +98,13 @@ def main() -> int:
     connection.settimeout(0.05)
     buffer = bytearray()
     initialized = False
-    following_count = 0
-    side_snapshot_sent = False
+    side_following_count = 0
+    side_unfollowed_before_idle_disconnect = False
     disconnect_at = None
     status_request_sent = False
     status_request_at = None
     recovery_snapshot_sent = False
-    side_agent_completion_at = None
+    side_conversation_completion_at = None
     idle_disconnect_at = None
     deadline = time.monotonic() + 12
 
@@ -137,7 +119,7 @@ def main() -> int:
                         "method": "client-status-changed",
                         "sourceClientId": "router",
                         "params": {
-                            "clientId": "owner-1",
+                            "clientId": "side-owner-1",
                             "status": "disconnected",
                         },
                     },
@@ -151,48 +133,61 @@ def main() -> int:
                     {
                         "type": "broadcast",
                         "method": "thread-stream-following-status-requested",
-                        "sourceClientId": "owner-2",
+                        "sourceClientId": "side-owner-2",
                         "version": 1,
                         "params": {
-                            "conversationId": CONVERSATION_ID,
+                            "conversationId": SIDE_CONVERSATION_ID,
                             "hostId": "local",
                         },
                     },
                 )
                 status_request_at = None
                 status_request_sent = True
+                send_frame(
+                    connection,
+                    {
+                        "type": "broadcast",
+                        "method": "thread-stream-following-changed",
+                        "sourceClientId": "side-owner-2",
+                        "version": 1,
+                        "params": {
+                            "conversationId": SIDE_CONVERSATION_ID,
+                            "hostId": "local",
+                            "following": True,
+                        },
+                    },
+                )
 
             if (
                 status_request_sent
-                and following_count >= 3
+                and side_following_count >= 3
                 and not recovery_snapshot_sent
             ):
                 send_frame(
                     connection,
                     state_snapshot(
-                        "owner-2",
+                        "side-owner-2",
                         2,
-                        "idle",
-                        CONVERSATION_ID,
-                        "running",
+                        "active",
+                        SIDE_CONVERSATION_ID,
                     ),
                 )
                 recovery_snapshot_sent = True
-                side_agent_completion_at = now + 3.5
+                side_conversation_completion_at = now + 3.5
 
             if (
-                side_agent_completion_at is not None
-                and now >= side_agent_completion_at
+                side_conversation_completion_at is not None
+                and now >= side_conversation_completion_at
             ):
                 send_frame(
                     connection,
                     {
                         "type": "broadcast",
                         "method": "thread-stream-state-changed",
-                        "sourceClientId": "owner-2",
+                        "sourceClientId": "side-owner-2",
                         "version": 11,
                         "params": {
-                            "conversationId": CONVERSATION_ID,
+                            "conversationId": SIDE_CONVERSATION_ID,
                             "hostId": "local",
                             "change": {
                                 "type": "patches",
@@ -201,16 +196,8 @@ def main() -> int:
                                 "patches": [
                                     {
                                         "op": "replace",
-                                        "path": [
-                                            "turns",
-                                            0,
-                                            "items",
-                                            0,
-                                            "agentsStates",
-                                            SIDE_AGENT_ID,
-                                            "status",
-                                        ],
-                                        "value": "completed",
+                                        "path": ["threadRuntimeStatus", "type"],
+                                        "value": "idle",
                                     }
                                 ],
                             },
@@ -221,31 +208,17 @@ def main() -> int:
                     connection,
                     {
                         "type": "broadcast",
-                        "method": "thread-stream-state-changed",
-                        "sourceClientId": "side-owner",
-                        "version": 11,
+                        "method": "thread-stream-following-changed",
+                        "sourceClientId": "side-owner-2",
+                        "version": 1,
                         "params": {
-                            "conversationId": SIDE_AGENT_ID,
+                            "conversationId": SIDE_CONVERSATION_ID,
                             "hostId": "local",
-                            "change": {
-                                "type": "patches",
-                                "baseRevision": 1,
-                                "revision": 2,
-                                "patches": [
-                                    {
-                                        "op": "replace",
-                                        "path": [
-                                            "threadRuntimeStatus",
-                                            "type",
-                                        ],
-                                        "value": "idle",
-                                    }
-                                ],
-                            },
+                            "following": False,
                         },
                     },
                 )
-                side_agent_completion_at = None
+                side_conversation_completion_at = None
                 idle_disconnect_at = now + 0.2
 
             if idle_disconnect_at is not None and now >= idle_disconnect_at:
@@ -256,7 +229,7 @@ def main() -> int:
                         "method": "client-status-changed",
                         "sourceClientId": "router",
                         "params": {
-                            "clientId": "owner-2",
+                            "clientId": "side-owner-2",
                             "status": "disconnected",
                         },
                     },
@@ -281,43 +254,70 @@ def main() -> int:
                         },
                     )
                     initialized = True
+                    send_frame(
+                        connection,
+                        {
+                            "type": "broadcast",
+                            "method": "thread-stream-following-changed",
+                            "sourceClientId": "side-owner-1",
+                            "version": 1,
+                            "params": {
+                                "conversationId": SIDE_CONVERSATION_ID,
+                                "hostId": "local",
+                                "following": True,
+                            },
+                        },
+                    )
                     continue
 
                 if (
                     initialized
                     and message.get("method") == "thread-stream-following-changed"
-                    and message.get("params", {}).get("following") is True
                 ):
                     followed_id = message.get("params", {}).get("conversationId")
-                    if followed_id == SIDE_AGENT_ID and not side_snapshot_sent:
-                        send_frame(
-                            connection,
-                            state_snapshot(
-                                "side-owner",
-                                1,
-                                "active",
-                                SIDE_AGENT_ID,
-                            ),
-                        )
-                        side_snapshot_sent = True
+                    following = message.get("params", {}).get("following")
+                    if (
+                        followed_id == SIDE_CONVERSATION_ID
+                        and following is False
+                        and idle_disconnect_at is not None
+                    ):
+                        side_unfollowed_before_idle_disconnect = True
+                        continue
+                    if following is not True:
+                        continue
+                    if followed_id == SIDE_CONVERSATION_ID:
+                        side_following_count += 1
+                        if side_following_count == 1:
+                            send_frame(
+                                connection,
+                                state_snapshot(
+                                    "side-owner-1",
+                                    1,
+                                    "active",
+                                    SIDE_CONVERSATION_ID,
+                                ),
+                            )
+                            disconnect_at = time.monotonic() + 1.5
                     elif followed_id == CONVERSATION_ID:
-                        following_count += 1
-                    if followed_id == CONVERSATION_ID and following_count == 1:
                         send_frame(
                             connection,
                             state_snapshot(
-                                "owner-1",
+                                "main-owner",
                                 1,
                                 "idle",
                                 CONVERSATION_ID,
-                                "running",
                             ),
                         )
-                        disconnect_at = time.monotonic() + 1.5
 
         if not recovery_snapshot_sent:
             print(
                 "monitor did not reassert following after the owner requested status",
+                file=sys.stderr,
+            )
+            return 1
+        if not side_unfollowed_before_idle_disconnect:
+            print(
+                "monitor did not unsubscribe from the completed side conversation",
                 file=sys.stderr,
             )
             return 1

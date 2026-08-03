@@ -39,12 +39,20 @@ state snapshot and subsequently streams state patches. The snapshot contains:
 This gives Clamshell Guard the state Codex itself is using instead of requiring a
 separate counter.
 
-Codex side tasks need one additional signal. Official Codex documentation
-describes subagents as separate agent threads, but a parent task can be `idle`
-while one of those agents is still working. In the Desktop conversation state,
-`collabAgentToolCall.agentsStates` maps agent-thread IDs to lifecycle status.
-Clamshell Guard treats `pendingInit` and `running` as active, combines those IDs
-with active parent IDs, and deduplicates the result.
+Codex Desktop side tasks are ephemeral side conversations. Unlike normal tasks,
+their IDs are not written to the `threads` table. When one is created, its
+Desktop owner broadcasts `thread-stream-following-changed` with the ephemeral
+conversation ID. Following that announced ID returns a snapshot with
+`sideConversation: true`, `ephemeral: true`, and the same
+`threadRuntimeStatus.type` values used by normal tasks. Clamshell Guard therefore
+combines database discovery with these live announcements and retains an active
+ephemeral subscription until it becomes idle.
+
+Subagents are a separate Codex feature. Official documentation describes them
+as agent threads, and Desktop represents their state under
+`collabAgentToolCall.agentsStates`. Clamshell Guard treats `pendingInit` and
+`running` subagents as active, combines those IDs with active conversation IDs,
+and deduplicates the result.
 
 The IPC interface is private and unsupported. It can change in a future Codex
 release, so failure must be treated as "status unavailable", never as proof
@@ -163,17 +171,19 @@ connection, while AUTO did.
 
 The repository's fake-router integration test additionally verifies:
 
-- an initial snapshot with an idle parent and running side task is observed as
-  one active task before the monitor settles as available;
-- a separate active snapshot for that side task does not double-count its agent
-  thread ID;
-- an owner disconnect preserves the last active count but changes availability
-  to unavailable;
+- the database contains only an idle normal task;
+- a `thread-stream-following-changed` announcement discovers an ephemeral side
+  conversation whose ID is absent from the database;
+- the side conversation's active snapshot is counted before the monitor settles
+  as available;
+- its owner disconnect preserves the active count but changes availability to
+  unavailable;
 - `thread-stream-following-status-requested` causes Clamshell Guard to reassert
   `following: true`;
 - a fresh snapshot from the replacement owner restores availability;
-- a side-task `running`-to-`completed` patch reduces the active count to zero;
-  and
+- an active-to-idle side-conversation patch reduces the count to zero;
+- an external `following: false` announcement removes the finished ephemeral
+  subscription; and
 - a later idle owner disconnect is not treated as an unknown active task.
 
 Run this coverage with:
@@ -182,10 +192,12 @@ Run this coverage with:
 ./tests/run.sh
 ```
 
-The idle-parent/running-side-task snapshot, aggregate count, owner recovery, and
-side-task completion patch are therefore covered by the integration test. The
-initial active and idle snapshots and active AUTO transition were also verified
-against the live app. Further release testing should still cover:
+Live inspection also verified that an actual running side task was absent from
+`state_5.sqlite`, was announced through `thread-stream-following-changed`, and
+returned `sideConversation: true`, `ephemeral: true`, and
+`threadRuntimeStatus.type == "active"` when followed. The discovery, aggregate
+count, owner recovery, completion patch, and cleanup path are covered by the
+integration test. Further release testing should still cover:
 
 - normal task completion;
 - user cancellation;
@@ -245,9 +257,10 @@ privacy-sensitive than consuming the runtime state already published on IPC.
 - The socket has no additional application-level authentication; same-user
   filesystem access is its security boundary.
 - Snapshots may contain conversation history and other task data. Clamshell Guard
-  must extract only `threadRuntimeStatus` plus the IDs and lifecycle status in
+  must extract only `threadRuntimeStatus` and the IDs and lifecycle status in
   `collabAgentToolCall.agentsStates`, must not persist the payload, and must
-  never log raw messages.
+  never log raw messages. Following announcements contribute only a
+  conversation ID and boolean state.
 - The monitor is local-only and performs no network requests.
 
 ## Failure behavior

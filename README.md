@@ -187,11 +187,12 @@ AUTO connects to Codex Desktop's per-user Unix socket:
 
 It discovers recently updated task IDs from Codex's local state database and
 subscribes to their live runtime state. It enables keep-awake while at least one
-parent task reports `active` or a Codex side task reports `pendingInit` or
-`running`. Parent and side-task IDs are deduplicated, and AUTO waits 5 seconds
-after the last task ends before allowing sleep. This avoids maintaining a
-separate task counter, so cancellation and missed lifecycle events cannot leave
-stale marker files.
+persisted task or live-announced Codex side task reports `active`. It also
+recognizes subagents whose collaboration state is `pendingInit` or `running`.
+Task and subagent IDs are deduplicated, and AUTO waits 5 seconds after the last
+task ends before allowing sleep. This avoids maintaining a separate task
+counter, so cancellation and missed lifecycle events cannot leave stale marker
+files.
 
 This IPC interface is private to Codex Desktop and may change in a future Codex
 release. If Clamshell Guard cannot validate the socket, open the state database, or
@@ -199,10 +200,11 @@ understand the IPC response, it shows `AUTO · Codex status unavailable` rather
 than claiming there are no active tasks. It reconnects automatically.
 
 Codex snapshots can contain more than runtime status. Clamshell Guard extracts
-only `threadRuntimeStatus` plus side-task IDs and lifecycle status from
-`collabAgentToolCall` items. It does not log or retain snapshot contents and
-makes no network requests. The complete protocol investigation, validation
-evidence, and compatibility notes are recorded in
+only `threadRuntimeStatus` plus subagent IDs and lifecycle status from
+`collabAgentToolCall` items; live following announcements contribute only a
+conversation ID. It does not log or retain snapshot contents and makes no
+network requests. The complete protocol investigation, validation evidence,
+and compatibility notes are recorded in
 [`docs/CODEX_IPC_RESEARCH.md`](docs/CODEX_IPC_RESEARCH.md).
 
 ---
