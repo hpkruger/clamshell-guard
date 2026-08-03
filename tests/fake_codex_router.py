@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 CONVERSATION_ID = "00000000-0000-0000-0000-000000000001"
+SIDE_AGENT_ID = "00000000-0000-0000-0000-000000000002"
 
 
 def send_frame(connection: socket.socket, message: dict) -> None:
@@ -38,21 +39,42 @@ def receive_frames(connection: socket.socket, buffer: bytearray) -> list[dict]:
     return messages
 
 
-def state_snapshot(owner: str, revision: int, status: str) -> dict:
+def state_snapshot(
+    owner: str,
+    revision: int,
+    status: str,
+    conversation_id: str,
+    side_agent_status: str | None = None,
+) -> dict:
+    conversation_state = {
+        "threadRuntimeStatus": {"type": status, "activeFlags": []}
+    }
+    if side_agent_status is not None:
+        conversation_state["turns"] = [
+            {
+                "items": [
+                    {
+                        "type": "collabAgentToolCall",
+                        "agentsStates": {
+                            SIDE_AGENT_ID: {"status": side_agent_status}
+                        },
+                    }
+                ]
+            }
+        ]
+
     return {
         "type": "broadcast",
         "method": "thread-stream-state-changed",
         "sourceClientId": owner,
         "version": 11,
         "params": {
-            "conversationId": CONVERSATION_ID,
+            "conversationId": conversation_id,
             "hostId": "local",
             "change": {
                 "type": "snapshot",
                 "revision": revision,
-                "conversationState": {
-                    "threadRuntimeStatus": {"type": status, "activeFlags": []}
-                },
+                "conversationState": conversation_state,
             },
         },
     }
@@ -76,6 +98,10 @@ def main() -> int:
         "INSERT INTO threads VALUES (?, ?, 0)",
         (CONVERSATION_ID, int(time.time())),
     )
+    database.execute(
+        "INSERT INTO threads VALUES (?, ?, 0)",
+        (SIDE_AGENT_ID, int(time.time())),
+    )
     database.commit()
     database.close()
 
@@ -91,11 +117,12 @@ def main() -> int:
     buffer = bytearray()
     initialized = False
     following_count = 0
+    side_snapshot_sent = False
     disconnect_at = None
     status_request_sent = False
     status_request_at = None
     recovery_snapshot_sent = False
-    idle_patch_at = None
+    side_agent_completion_at = None
     idle_disconnect_at = None
     deadline = time.monotonic() + 12
 
@@ -140,11 +167,23 @@ def main() -> int:
                 and following_count >= 3
                 and not recovery_snapshot_sent
             ):
-                send_frame(connection, state_snapshot("owner-2", 2, "active"))
+                send_frame(
+                    connection,
+                    state_snapshot(
+                        "owner-2",
+                        2,
+                        "idle",
+                        CONVERSATION_ID,
+                        "running",
+                    ),
+                )
                 recovery_snapshot_sent = True
-                idle_patch_at = now + 3.5
+                side_agent_completion_at = now + 3.5
 
-            if idle_patch_at is not None and now >= idle_patch_at:
+            if (
+                side_agent_completion_at is not None
+                and now >= side_agent_completion_at
+            ):
                 send_frame(
                     connection,
                     {
@@ -162,7 +201,43 @@ def main() -> int:
                                 "patches": [
                                     {
                                         "op": "replace",
-                                        "path": ["threadRuntimeStatus", "type"],
+                                        "path": [
+                                            "turns",
+                                            0,
+                                            "items",
+                                            0,
+                                            "agentsStates",
+                                            SIDE_AGENT_ID,
+                                            "status",
+                                        ],
+                                        "value": "completed",
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                )
+                send_frame(
+                    connection,
+                    {
+                        "type": "broadcast",
+                        "method": "thread-stream-state-changed",
+                        "sourceClientId": "side-owner",
+                        "version": 11,
+                        "params": {
+                            "conversationId": SIDE_AGENT_ID,
+                            "hostId": "local",
+                            "change": {
+                                "type": "patches",
+                                "baseRevision": 1,
+                                "revision": 2,
+                                "patches": [
+                                    {
+                                        "op": "replace",
+                                        "path": [
+                                            "threadRuntimeStatus",
+                                            "type",
+                                        ],
                                         "value": "idle",
                                     }
                                 ],
@@ -170,7 +245,7 @@ def main() -> int:
                         },
                     },
                 )
-                idle_patch_at = None
+                side_agent_completion_at = None
                 idle_disconnect_at = now + 0.2
 
             if idle_disconnect_at is not None and now >= idle_disconnect_at:
@@ -211,13 +286,33 @@ def main() -> int:
                 if (
                     initialized
                     and message.get("method") == "thread-stream-following-changed"
-                    and message.get("params", {}).get("conversationId")
-                    == CONVERSATION_ID
                     and message.get("params", {}).get("following") is True
                 ):
-                    following_count += 1
-                    if following_count == 1:
-                        send_frame(connection, state_snapshot("owner-1", 1, "active"))
+                    followed_id = message.get("params", {}).get("conversationId")
+                    if followed_id == SIDE_AGENT_ID and not side_snapshot_sent:
+                        send_frame(
+                            connection,
+                            state_snapshot(
+                                "side-owner",
+                                1,
+                                "active",
+                                SIDE_AGENT_ID,
+                            ),
+                        )
+                        side_snapshot_sent = True
+                    elif followed_id == CONVERSATION_ID:
+                        following_count += 1
+                    if followed_id == CONVERSATION_ID and following_count == 1:
+                        send_frame(
+                            connection,
+                            state_snapshot(
+                                "owner-1",
+                                1,
+                                "idle",
+                                CONVERSATION_ID,
+                                "running",
+                            ),
+                        )
                         disconnect_at = time.monotonic() + 1.5
 
         if not recovery_snapshot_sent:

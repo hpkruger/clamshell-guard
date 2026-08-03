@@ -20,7 +20,8 @@ struct CodexActivityState: Equatable {
 //
 // SQLite is used only to discover candidate conversation IDs. Runtime status
 // always comes from the Codex window that owns a conversation. Raw snapshots
-// are neither logged nor retained: only "active" versus "not active" is kept.
+// are neither logged nor retained: only runtime status and active side-agent
+// IDs are kept.
 final class CodexIPCMonitor {
     typealias UpdateHandler = (CodexActivityState) -> Void
 
@@ -41,6 +42,7 @@ final class CodexIPCMonitor {
     private var clientID: String?
     private var subscribedConversationIDs = Set<String>()
     private var statusByConversationID: [String: String] = [:]
+    private var activeSideAgentIDsByConversationID: [String: Set<String>] = [:]
     private var ownerByConversationID: [String: String] = [:]
     private var revisionByConversationID: [String: Int] = [:]
     private var conversationsAwaitingOwner = Set<String>()
@@ -311,6 +313,8 @@ final class CodexIPCMonitor {
                 return
             }
             statusByConversationID[conversationID] = statusType
+            activeSideAgentIDsByConversationID[conversationID] =
+                activeSideAgentIDs(in: conversationState)
             conversationsAwaitingOwner.remove(conversationID)
             if let sourceClientID {
                 ownerByConversationID[conversationID] = sourceClientID
@@ -357,7 +361,7 @@ final class CodexIPCMonitor {
             return
         }
 
-        var statusChanged = false
+        var activityChanged = false
         var needsSnapshot = false
         for patch in patches {
             guard let rawPath = patch["path"] as? [Any] else { continue }
@@ -366,26 +370,72 @@ final class CodexIPCMonitor {
                 if let number = element as? NSNumber { return number.stringValue }
                 return nil
             }
-            guard path.first == "threadRuntimeStatus" else { continue }
-
             let operation = patch["op"] as? String
-            if operation == "remove" {
-                needsSnapshot = true
+            if path.first == "threadRuntimeStatus" {
+                if operation == "remove" {
+                    needsSnapshot = true
+                    continue
+                }
+
+                if path.count == 1,
+                   let value = patch["value"] as? [String: Any],
+                   let statusType = value["type"] as? String {
+                    statusByConversationID[conversationID] = statusType
+                    activityChanged = true
+                } else if path.count == 2,
+                          path[1] == "type",
+                          let statusType = patch["value"] as? String {
+                    statusByConversationID[conversationID] = statusType
+                    activityChanged = true
+                } else {
+                    needsSnapshot = true
+                }
                 continue
             }
 
-            if path.count == 1,
-               let value = patch["value"] as? [String: Any],
-               let statusType = value["type"] as? String {
-                statusByConversationID[conversationID] = statusType
-                statusChanged = true
-            } else if path.count == 2,
-                      path[1] == "type",
-                      let statusType = patch["value"] as? String {
-                statusByConversationID[conversationID] = statusType
-                statusChanged = true
-            } else {
-                needsSnapshot = true
+            if let agentsStatesIndex = path.lastIndex(of: "agentsStates") {
+                let agentIDIndex = agentsStatesIndex + 1
+                if path.count == agentIDIndex + 1 {
+                    let agentID = path[agentIDIndex]
+                    if operation == "remove" {
+                        activeSideAgentIDsByConversationID[conversationID]?
+                            .remove(agentID)
+                        activityChanged = true
+                    } else if let value = patch["value"] as? [String: Any],
+                              let status = value["status"] as? String {
+                        setSideAgent(agentID,
+                                     status: status,
+                                     for: conversationID)
+                        activityChanged = true
+                    } else {
+                        needsSnapshot = true
+                    }
+                } else if path.count == agentIDIndex + 2,
+                          path[agentIDIndex + 1] == "status",
+                          let status = patch["value"] as? String,
+                          operation != "remove" {
+                    setSideAgent(path[agentIDIndex],
+                                 status: status,
+                                 for: conversationID)
+                    activityChanged = true
+                } else {
+                    // Replacing or removing a complete agentsStates map cannot
+                    // be reconciled safely with the flattened ID set.
+                    needsSnapshot = true
+                }
+                continue
+            }
+
+            if operation != "remove", let value = patch["value"] {
+                let sideAgentStatuses = sideAgentStatuses(in: value)
+                if !sideAgentStatuses.isEmpty {
+                    for (agentID, status) in sideAgentStatuses {
+                        setSideAgent(agentID,
+                                     status: status,
+                                     for: conversationID)
+                    }
+                    activityChanged = true
+                }
             }
         }
 
@@ -394,7 +444,7 @@ final class CodexIPCMonitor {
         }
         if needsSnapshot {
             requestFreshSnapshot(for: conversationID)
-        } else if statusChanged {
+        } else if activityChanged {
             emitState()
         }
     }
@@ -420,12 +470,17 @@ final class CodexIPCMonitor {
 
         for conversationID in affected {
             let wasActive = statusByConversationID[conversationID] == "active"
+                || !(activeSideAgentIDsByConversationID[conversationID]?.isEmpty
+                    ?? true)
             ownerByConversationID.removeValue(forKey: conversationID)
             revisionByConversationID.removeValue(forKey: conversationID)
             if wasActive {
                 conversationsAwaitingOwner.insert(conversationID)
             } else {
                 statusByConversationID.removeValue(forKey: conversationID)
+                activeSideAgentIDsByConversationID.removeValue(
+                    forKey: conversationID
+                )
             }
             requestFreshSnapshot(for: conversationID)
         }
@@ -447,6 +502,9 @@ final class CodexIPCMonitor {
         for conversationID in removed {
             sendFollowing(conversationID: conversationID, following: false)
             statusByConversationID.removeValue(forKey: conversationID)
+            activeSideAgentIDsByConversationID.removeValue(
+                forKey: conversationID
+            )
             ownerByConversationID.removeValue(forKey: conversationID)
             revisionByConversationID.removeValue(forKey: conversationID)
             conversationsAwaitingOwner.remove(conversationID)
@@ -607,6 +665,7 @@ final class CodexIPCMonitor {
         clientID = nil
         subscribedConversationIDs.removeAll()
         statusByConversationID.removeAll()
+        activeSideAgentIDsByConversationID.removeAll()
         ownerByConversationID.removeAll()
         revisionByConversationID.removeAll()
         conversationsAwaitingOwner.removeAll()
@@ -619,11 +678,14 @@ final class CodexIPCMonitor {
     }
 
     private func emitState() {
-        let activeCount = statusByConversationID.values.reduce(0) {
-            $0 + ($1 == "active" ? 1 : 0)
+        var activeIDs = Set(statusByConversationID.compactMap {
+            $0.value == "active" ? $0.key : nil
+        })
+        for sideAgentIDs in activeSideAgentIDsByConversationID.values {
+            activeIDs.formUnion(sideAgentIDs)
         }
         let state = CodexActivityState(availability: availability,
-                                       activeCount: activeCount)
+                                       activeCount: activeIDs.count)
         guard state != lastEmittedState else { return }
         lastEmittedState = state
         let updateHandler = updateHandler
@@ -636,6 +698,50 @@ final class CodexIPCMonitor {
         if let value = value as? Int { return value }
         if let value = value as? NSNumber { return value.intValue }
         return nil
+    }
+
+    private func setSideAgent(_ agentID: String,
+                              status: String,
+                              for conversationID: String) {
+        if status == "pendingInit" || status == "running" {
+            activeSideAgentIDsByConversationID[conversationID, default: []]
+                .insert(agentID)
+        } else {
+            activeSideAgentIDsByConversationID[conversationID]?.remove(agentID)
+        }
+    }
+
+    private func activeSideAgentIDs(in value: Any) -> Set<String> {
+        Set(sideAgentStatuses(in: value).compactMap {
+            $0.value == "pendingInit" || $0.value == "running" ? $0.key : nil
+        })
+    }
+
+    private func sideAgentStatuses(in value: Any) -> [String: String] {
+        var result: [String: String] = [:]
+        collectSideAgentStatuses(in: value, into: &result)
+        return result
+    }
+
+    private func collectSideAgentStatuses(in value: Any,
+                                          into result: inout [String: String]) {
+        if let dictionary = value as? [String: Any] {
+            if dictionary["type"] as? String == "collabAgentToolCall",
+               let agentsStates = dictionary["agentsStates"] as? [String: Any] {
+                for (agentID, rawState) in agentsStates {
+                    guard let state = rawState as? [String: Any],
+                          let status = state["status"] as? String else { continue }
+                    result[agentID] = status
+                }
+            }
+            for nestedValue in dictionary.values {
+                collectSideAgentStatuses(in: nestedValue, into: &result)
+            }
+        } else if let array = value as? [Any] {
+            for nestedValue in array {
+                collectSideAgentStatuses(in: nestedValue, into: &result)
+            }
+        }
     }
 
     private var codexHomeURL: URL {

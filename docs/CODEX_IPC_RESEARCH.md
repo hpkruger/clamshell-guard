@@ -1,6 +1,6 @@
 # Codex Desktop task-status research
 
-Research date: 29 July 2026
+Research date: 3 August 2026
 
 ## Purpose
 
@@ -38,6 +38,13 @@ state snapshot and subsequently streams state patches. The snapshot contains:
 
 This gives Clamshell Guard the state Codex itself is using instead of requiring a
 separate counter.
+
+Codex side tasks need one additional signal. Official Codex documentation
+describes subagents as separate agent threads, but a parent task can be `idle`
+while one of those agents is still working. In the Desktop conversation state,
+`collabAgentToolCall.agentsStates` maps agent-thread IDs to lifecycle status.
+Clamshell Guard treats `pendingInit` and `running` as active, combines those IDs
+with active parent IDs, and deduplicates the result.
 
 The IPC interface is private and unsupported. It can change in a future Codex
 release, so failure must be treated as "status unavailable", never as proof
@@ -156,15 +163,18 @@ connection, while AUTO did.
 
 The repository's fake-router integration test additionally verifies:
 
-- an initial active snapshot is observed before the monitor settles as
-  available;
+- an initial snapshot with an idle parent and running side task is observed as
+  one active task before the monitor settles as available;
+- a separate active snapshot for that side task does not double-count its agent
+  thread ID;
 - an owner disconnect preserves the last active count but changes availability
   to unavailable;
 - `thread-stream-following-status-requested` causes Clamshell Guard to reassert
   `following: true`;
-- a fresh snapshot from the replacement owner restores availability; and
-- a subsequent active-to-idle patch is applied without treating a later idle
-  owner disconnect as an unknown active task.
+- a fresh snapshot from the replacement owner restores availability;
+- a side-task `running`-to-`completed` patch reduces the active count to zero;
+  and
+- a later idle owner disconnect is not treated as an unknown active task.
 
 Run this coverage with:
 
@@ -172,9 +182,10 @@ Run this coverage with:
 ./tests/run.sh
 ```
 
-The initial active and idle snapshots, aggregate count, and active AUTO
-transition were therefore verified. Further release testing should still
-cover:
+The idle-parent/running-side-task snapshot, aggregate count, owner recovery, and
+side-task completion patch are therefore covered by the integration test. The
+initial active and idle snapshots and active AUTO transition were also verified
+against the live app. Further release testing should still cover:
 
 - normal task completion;
 - user cancellation;
@@ -234,8 +245,9 @@ privacy-sensitive than consuming the runtime state already published on IPC.
 - The socket has no additional application-level authentication; same-user
   filesystem access is its security boundary.
 - Snapshots may contain conversation history and other task data. Clamshell Guard
-  must extract only `threadRuntimeStatus`, must not persist the payload, and
-  must never log raw messages.
+  must extract only `threadRuntimeStatus` plus the IDs and lifecycle status in
+  `collabAgentToolCall.agentsStates`, must not persist the payload, and must
+  never log raw messages.
 - The monitor is local-only and performs no network requests.
 
 ## Failure behavior
@@ -251,11 +263,11 @@ AUTO mode distinguishes these states:
 The connection should be retried after failure. On reconnect, clear stale IPC
 state, rediscover candidate IDs, and request fresh snapshots.
 
-If an active conversation's owner disconnects, retain its last known active
-status and treat the monitor as unavailable until a replacement owner supplies
-a valid snapshot. An idle conversation cannot begin new work without an owner,
-so its status does not need the same fail-safe. The replacement owner can
-recover existing followers with
+If a conversation with an active parent or side task loses its owner, retain its
+last known active status and treat the monitor as unavailable until a replacement
+owner supplies a valid snapshot. A conversation with neither cannot begin new
+work without an owner, so its status does not need the same fail-safe. The
+replacement owner can recover existing followers with
 `thread-stream-following-status-requested`.
 
 Initial availability uses a one-second settling window after candidate
@@ -268,6 +280,7 @@ application update therefore remains a required compatibility smoke test.
 
 ## Sources
 
+- [Official Codex subagents documentation](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 - [Official Codex app-server protocol](https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md)
 - [OpenAI Codex issue #25914: attach to an active Desktop thread](https://github.com/openai/codex/issues/25914)
 - [OpenAI Codex issue #21743: Desktop app-server control-socket limitation](https://github.com/openai/codex/issues/21743)

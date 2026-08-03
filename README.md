@@ -16,7 +16,8 @@ restores normal sleep when the task finishes.
 Clamshell Guard provides three modes:
 
 - **ON** — always prevent sleep
-- **AUTO** — prevent sleep while the macOS Codex app is running one or more tasks
+- **AUTO** — prevent sleep while the macOS Codex app is running one or more
+  tasks, including side tasks
 - **OFF** — use normal macOS sleep behaviour
 
 ## What this fork adds
@@ -28,7 +29,7 @@ and adds:
 | Area | Original project | This fork |
 | --- | --- | --- |
 | Controls | Single manual on/off toggle | **ON / AUTO / OFF** mode selector |
-| Codex integration | None | **AUTO** follows live Codex Desktop task state, including concurrent tasks |
+| Codex integration | None | **AUTO** follows live Codex Desktop task state, including concurrent and side tasks |
 | Monitor resilience | Not applicable | Reconnects after Codex restarts or socket-owner changes and reports unavailable state safely |
 | Sleep protection | `pmset disablesleep` | `pmset disablesleep` plus a process-scoped IOKit `PreventSystemSleep` assertion |
 | Lid-close display handling | No explicit display command | Runs `pmset displaysleepnow` once per lid-close transition |
@@ -186,20 +187,22 @@ AUTO connects to Codex Desktop's per-user Unix socket:
 
 It discovers recently updated task IDs from Codex's local state database and
 subscribes to their live runtime state. It enables keep-awake while at least one
-task reports `active`, supports concurrent tasks, and waits 5 seconds after the
-last task ends before allowing sleep. This avoids maintaining a separate task
-counter, so cancellation and missed lifecycle events cannot leave stale marker
-files.
+parent task reports `active` or a Codex side task reports `pendingInit` or
+`running`. Parent and side-task IDs are deduplicated, and AUTO waits 5 seconds
+after the last task ends before allowing sleep. This avoids maintaining a
+separate task counter, so cancellation and missed lifecycle events cannot leave
+stale marker files.
 
 This IPC interface is private to Codex Desktop and may change in a future Codex
 release. If Clamshell Guard cannot validate the socket, open the state database, or
 understand the IPC response, it shows `AUTO · Codex status unavailable` rather
 than claiming there are no active tasks. It reconnects automatically.
 
-Codex snapshots can contain more than runtime status. Clamshell Guard extracts only
-`threadRuntimeStatus`, does not log or retain snapshot contents, and makes no
-network requests. The complete protocol investigation, validation evidence,
-and compatibility notes are recorded in
+Codex snapshots can contain more than runtime status. Clamshell Guard extracts
+only `threadRuntimeStatus` plus side-task IDs and lifecycle status from
+`collabAgentToolCall` items. It does not log or retain snapshot contents and
+makes no network requests. The complete protocol investigation, validation
+evidence, and compatibility notes are recorded in
 [`docs/CODEX_IPC_RESEARCH.md`](docs/CODEX_IPC_RESEARCH.md).
 
 ---

@@ -17,10 +17,14 @@ struct CodexIPCMonitorIntegration {
         var sawRecoveredActive = false
         var idleObservedAt: Date?
         var becameUnavailableAfterIdle = false
+        var sawDuplicateCount = false
         var completed = false
 
         let monitor = CodexIPCMonitor { state in
             observedStates.append(state)
+            if state.activeCount > 1 {
+                sawDuplicateCount = true
+            }
 
             if state.availability == .available && state.activeCount == 1 {
                 if sawOwnerUnavailable {
@@ -54,7 +58,7 @@ struct CodexIPCMonitorIntegration {
         }
         monitor.stop()
 
-        guard completed, !becameUnavailableAfterIdle else {
+        guard completed, !becameUnavailableAfterIdle, !sawDuplicateCount else {
             let summary = observedStates.map {
                 "\($0.availability)/\($0.activeCount)"
             }.joined(separator: ", ")
@@ -62,6 +66,6 @@ struct CodexIPCMonitorIntegration {
             exit(1)
         }
 
-        print("CodexIPCMonitor recovery integration test passed")
+        print("CodexIPCMonitor side-task recovery integration test passed")
     }
 }
